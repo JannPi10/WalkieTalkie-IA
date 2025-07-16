@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -34,13 +35,23 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	// Leer canal
-	_, canalBytes, err := conn.ReadMessage()
+	// Leer primer mensaje: canal (puede ser string plano o JSON)
+	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		log.Println("Error al leer canal:", err)
 		return
 	}
-	canal := string(canalBytes)
+
+	var canal string
+	var canalPayload struct {
+		Canal string `json:"canal"`
+	}
+
+	if err := json.Unmarshal(msg, &canalPayload); err == nil && canalPayload.Canal != "" {
+		canal = canalPayload.Canal
+	} else {
+		canal = string(msg)
+	}
 
 	if !canalesValidos[canal] {
 		conn.WriteMessage(websocket.TextMessage, []byte("Canal inválido"))
@@ -62,6 +73,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer unregisterClient(client)
 
 	log.Printf("🟢 %s conectado a %s\n", username, canal)
+	conn.WriteJSON(map[string]string{
+		"message": fmt.Sprintf("Conectado al canal %s", canal),
+	})
 
 	for {
 		msgType, msg, err := conn.ReadMessage()
@@ -107,6 +121,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		broadcast(client, msgType, msg)
 	}
 }
+
 func registerClient(client *Client) bool {
 	mutex.Lock()
 	defer mutex.Unlock()

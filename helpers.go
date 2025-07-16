@@ -32,6 +32,6 @@ func extractUsernameFromToken(r *http.Request) string {
 		return ""
 	}
 	claims := token.Claims.(jwt.MapClaims)
-	username := claims["username"].(string)
-	return username
+	email := claims["email"].(string)
+	return email
 }
