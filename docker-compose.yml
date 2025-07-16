@@ -1,0 +1,27 @@
+services:
+  db:
+    image: postgres:16
+    container_name: postgres_walkie
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: walkie_db
+      POSTGRES_USER: gopenux
+      POSTGRES_PASSWORD: gopenux1234
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    container_name: walkie_backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
+
