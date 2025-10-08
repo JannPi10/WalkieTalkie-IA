@@ -7,7 +7,7 @@ import (
 	"net/http"
 )
 
-const maxUsuariosPorCanal = 5
+const maxUsuariosPorCanal = 100
 
 var (
 	canalesValidos = map[string]bool{

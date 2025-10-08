@@ -37,6 +37,14 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ✅ SOLUCIÓN: Verificar si el email ya existe ANTES de intentar crear el usuario
+	var existingUser models.User
+	if err := db.Where("email = ?", input.Email).First(&existingUser).Error; err == nil {
+		// El usuario existe (err == nil significa que se encontró)
+		writeJSONError(w, http.StatusConflict, "El correo ya está registrado")
+		return
+	}
+
 	// Hashear la contraseña
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -53,6 +61,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := db.Create(&user).Error; err != nil {
+		// Como verificación de respaldo por si acaso hay race condition
 		if strings.Contains(err.Error(), "duplicate key") {
 			writeJSONError(w, http.StatusConflict, "El correo ya está registrado")
 		} else {
