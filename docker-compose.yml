@@ -1,10 +1,10 @@
 services:
   db:
     image: postgres:16
-    container_name: postgres_walkie
+    container_name: postgres_walkie-IA
     restart: always
     ports:
-      - "5432:5432"
+      - "5433:5432"
     environment:
       POSTGRES_DB: walkie_db
       POSTGRES_USER: gopenux
@@ -19,9 +19,9 @@ services:
 
   app:
     build: .
-    container_name: walkie_backend
+    container_name: walkie_backend-IA
     ports:
-      - "80:8080"
+      - "8086:8080"
     env_file:
       - .env
     depends_on:
