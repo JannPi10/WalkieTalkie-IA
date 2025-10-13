@@ -14,8 +14,8 @@ import (
 )
 
 const (
-	defaultModel   = "deepseek-chat"
-	defaultBaseURL = "https://api.deepseek.com/v1"
+	defaultModel   = "deepseek-r1:7b"
+	defaultBaseURL = "http://deepseek:11434"
 	systemPrompt   = `Eres Gopebot, asistente de walkie-talkie para un equipo móvil.
 Debes interpretar comandos de voz ya transcritos al texto.
 Usa solo los datos provistos por el backend para responder.
@@ -24,7 +24,7 @@ Responde SIEMPRE en español usando JSON con esta forma:
 Si no entiendes el comando, usa intent "unknown" y explica que no lo comprendiste.`
 )
 
-// Client maneja las llamadas a la API de DeepSeek.
+// Client maneja las llamadas al servicio local (u oficial) de DeepSeek/Ollama.
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
@@ -44,54 +44,53 @@ type message struct {
 	Content string `json:"content"`
 }
 
-type completionRequest struct {
-	Model          string            `json:"model"`
-	Messages       []message         `json:"messages"`
-	ResponseFormat map[string]string `json:"response_format,omitempty"`
+type chatRequest struct {
+	Model    string    `json:"model"`
+	Messages []message `json:"messages"`
+	Stream   bool      `json:"stream"`
 }
 
-type completionResponse struct {
-	Choices []struct {
-		Message message `json:"message"`
-	} `json:"choices"`
+type chatResponse struct {
+	Message message `json:"message"`
 }
 
-var (
-	ErrMissingAPIKey = errors.New("deepseek: DEEPSEEK_API_KEY no configurada")
-)
+var ErrEmptyCommand = errors.New("deepseek: comando vacío")
 
-// NewClient inicializa el cliente con la configuración del entorno.
+// NewClient inicializa el cliente usando variables de entorno.
 func NewClient() (*Client, error) {
-	apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
-	if apiKey == "" {
-		return nil, ErrMissingAPIKey
-	}
 	baseURL := strings.TrimSpace(os.Getenv("DEEPSEEK_API_URL"))
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
+	model := strings.TrimSpace(os.Getenv("DEEPSEEK_MODEL"))
+	if model == "" {
+		model = defaultModel
+	}
+	// apiKey es opcional. Solo se envía si está presente.
+	apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
+
 	return &Client{
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		httpClient: &http.Client{Timeout: 60 * time.Second},
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
-		model:      defaultModel,
+		model:      model,
 	}, nil
 }
 
-// ProcessCommand envía el comando y devuelve la intención/respuesta.
+// ProcessCommand envía el comando y devuelve la respuesta del modelo.
 func (c *Client) ProcessCommand(ctx context.Context, transcript string, channels []string) (CommandResult, error) {
 	transcript = strings.TrimSpace(transcript)
 	if transcript == "" {
-		return CommandResult{}, errors.New("deepseek: comando vacío")
+		return CommandResult{}, ErrEmptyCommand
 	}
 
-	reqBody := completionRequest{
-		Model: c.model,
+	reqBody := chatRequest{
+		Model:  c.model,
+		Stream: false,
 		Messages: []message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: buildUserPrompt(transcript, channels)},
 		},
-		ResponseFormat: map[string]string{"type": "json_object"},
 	}
 
 	payload, err := json.Marshal(reqBody)
@@ -99,13 +98,15 @@ func (c *Client) ProcessCommand(ctx context.Context, transcript string, channels
 		return CommandResult{}, fmt.Errorf("deepseek: no se pudo serializar request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/chat/completions", c.baseURL)
+	url := fmt.Sprintf("%s/api/chat", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return CommandResult{}, fmt.Errorf("deepseek: no se pudo crear request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
@@ -114,25 +115,25 @@ func (c *Client) ProcessCommand(ctx context.Context, transcript string, channels
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return CommandResult{}, fmt.Errorf("deepseek: status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var decoded completionResponse
+	var decoded chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
 		return CommandResult{}, fmt.Errorf("deepseek: no se pudo parsear respuesta: %w", err)
 	}
-	if len(decoded.Choices) == 0 {
-		return CommandResult{}, errors.New("deepseek: respuesta sin opciones")
+
+	content := strings.TrimSpace(decoded.Message.Content)
+	if content == "" {
+		return CommandResult{}, errors.New("deepseek: respuesta vacía")
 	}
 
-	content := strings.TrimSpace(decoded.Choices[0].Message.Content)
 	var result CommandResult
 	if err := json.Unmarshal([]byte(content), &result); err == nil && result.Reply != "" {
 		return result, nil
 	}
 
-	// Fallback: devolver texto plano.
 	return CommandResult{
 		Reply:  content,
 		Intent: "raw_response",
@@ -144,6 +145,7 @@ func buildUserPrompt(transcript string, channels []string) string {
 	sb.WriteString("Comando transcrito del usuario: ")
 	sb.WriteString(strconvJSONString(transcript))
 	sb.WriteRune('\n')
+
 	if len(channels) == 0 {
 		sb.WriteString("No hay canales públicos registrados actualmente.\n")
 	} else {
@@ -151,7 +153,7 @@ func buildUserPrompt(transcript string, channels []string) string {
 		sb.WriteString(strings.Join(channels, ", "))
 		sb.WriteRune('\n')
 	}
-	sb.WriteString("Indica intent según el comando. Usa channels solo si el intent es list_channels u otro que requiera datos.")
+	sb.WriteString("Indica intent según el comando. Usa channels solo si corresponde.")
 	return sb.String()
 }
 

@@ -1,21 +1,19 @@
 services:
-  db:
-    image: postgres:16
-    container_name: postgres_walkie-IA
-    restart: always
+  deepseek:
+    image: ollama/ollama:latest
+    container_name: deepseek-local
+    restart: unless-stopped
     ports:
-      - "5433:5432"
+      - "11434:11434"
     environment:
-      POSTGRES_DB: walkie_db
-      POSTGRES_USER: gopenux
-      POSTGRES_PASSWORD: gopenux1234
+      - OLLAMA_KEEP_ALIVE=24h
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ollama:/root/.ollama
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gopenux -d walkie_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
 
   app:
     build: .
@@ -25,8 +23,8 @@ services:
     env_file:
       - .env
     depends_on:
-      db:
+      deepseek:
         condition: service_healthy
 
 volumes:
-  pgdata:
+  ollama:
