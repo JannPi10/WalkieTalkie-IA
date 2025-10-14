@@ -16,15 +16,60 @@ import (
 const (
 	defaultModel   = "deepseek-r1:7b"
 	defaultBaseURL = "http://deepseek:11434"
-	systemPrompt   = `Eres Gopebot, asistente de walkie-talkie para un equipo móvil.
-Debes interpretar comandos de voz ya transcritos al texto.
-Usa solo los datos provistos por el backend para responder.
-Responde SIEMPRE en español usando JSON con esta forma:
-{"reply":"texto a devolver al usuario","intent":"nombre_intencion","channels":["lista","opcional"]}.
-Si no entiendes el comando, usa intent "unknown" y explica que no lo comprendiste.`
+	systemPrompt   = `Eres un asistente de walkie-talkie inteligente, amigable y conversacional. Tu función es analizar texto transcrito de audio e identificar si el usuario está emitiendo un COMANDO o una CONVERSACIÓN normal.
+
+COMANDOS A RECONOCER:
+
+1. Solicitar Lista de Canales
+Variaciones: "dame la lista", "tráeme los canales", "qué canales hay", "lista de canales"
+Intent: request_channel_list
+
+2. Conectarse a Canal
+Patrón: "conectame al canal-X", "cambiar al canal-X", "ir al canal-X" (X=1-5)
+Intent: request_channel_connect
+
+3. Confirmaciones
+Palabras clave: "si", "sí", "yes", "aja", "ajam", "obvio", "claro", "correcto", "exacto"
+Intent: confirm_channel_list o confirm_channel_connect (según contexto)
+
+4. Negaciones
+Palabras clave: "no", "nope", "para nada", "cancelar"
+Intent: deny_action
+
+ESTADOS DE CONVERSACIÓN:
+- normal: Sin comandos pendientes
+- awaiting_channel_list_confirm: Esperando confirmación para mostrar lista
+- awaiting_channel_connect_confirm: Esperando confirmación para conectar
+
+INTENTS DISPONIBLES:
+- request_channel_list: Usuario pide lista de canales
+- confirm_channel_list: Usuario confirma ver lista
+- request_channel_connect: Usuario pide conectarse a canal
+- confirm_channel_connect: Usuario confirma conexión
+- deny_action: Usuario cancela acción
+- conversation: Conversación normal
+- unknown: No se entiende
+
+FORMATO DE RESPUESTA (JSON VÁLIDO):
+{
+  "is_command": true/false,
+  "intent": "nombre_del_intent",
+  "reply": "respuesta amigable en español",
+  "channels": ["lista_opcional"],
+  "state": "estado_conversacion",
+  "pending_channel": "canal_pendiente_si_aplica"
+}
+
+DIRECTRICES:
+- Sé conversacional y amigable
+- Pide confirmación para comandos importantes
+- Respuestas claras y concisas, optimizadas para síntesis de voz
+- Evita caracteres especiales innecesarios
+- Usa puntuación natural para mejorar entonación
+- Favorece palabras comunes`
 )
 
-// Client maneja las llamadas al servicio local (u oficial) de DeepSeek/Ollama.
+// Client maneja las llamadas al servicio local de DeepSeek/Ollama.
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
@@ -32,11 +77,14 @@ type Client struct {
 	model      string
 }
 
-// CommandResult representa la respuesta normalizada del modelo.
+// CommandResult representa la respuesta del modelo.
 type CommandResult struct {
-	Reply    string   `json:"reply"`
-	Intent   string   `json:"intent"`
-	Channels []string `json:"channels,omitempty"`
+	IsCommand      bool     `json:"is_command"`
+	Intent         string   `json:"intent"`
+	Reply          string   `json:"reply"`
+	Channels       []string `json:"channels,omitempty"`
+	State          string   `json:"state"`
+	PendingChannel string   `json:"pending_channel,omitempty"`
 }
 
 type message struct {
@@ -54,7 +102,7 @@ type chatResponse struct {
 	Message message `json:"message"`
 }
 
-var ErrEmptyCommand = errors.New("deepseek: comando vacío")
+var ErrEmptyTranscript = errors.New("deepseek: transcripción vacía")
 
 // NewClient inicializa el cliente usando variables de entorno.
 func NewClient() (*Client, error) {
@@ -66,42 +114,50 @@ func NewClient() (*Client, error) {
 	if model == "" {
 		model = defaultModel
 	}
-	// apiKey es opcional. Solo se envía si está presente.
 	apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
 
 	return &Client{
-		httpClient: &http.Client{Timeout: 60 * time.Second},
+		httpClient: &http.Client{Timeout: 120 * time.Second},
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
 		model:      model,
 	}, nil
 }
 
-// ProcessCommand envía el comando y devuelve la respuesta del modelo.
-func (c *Client) ProcessCommand(ctx context.Context, transcript string, channels []string) (CommandResult, error) {
+// AnalyzeTranscript analiza el texto transcrito y determina si es comando o conversación
+func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, channels []string, currentState string, pendingChannel string) (CommandResult, error) {
 	transcript = strings.TrimSpace(transcript)
 	if transcript == "" {
-		return CommandResult{}, ErrEmptyCommand
+		return CommandResult{}, ErrEmptyTranscript
 	}
+
+	fallback := CommandResult{
+		IsCommand: false,
+		Intent:    "unknown",
+		Reply:     "Lo siento, no pude procesar tu comando. ¿Puedes repetirlo?",
+		State:     "normal",
+	}
+
+	userPrompt := buildAnalysisPrompt(transcript, channels, currentState, pendingChannel)
 
 	reqBody := chatRequest{
 		Model:  c.model,
 		Stream: false,
 		Messages: []message{
 			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: buildUserPrompt(transcript, channels)},
+			{Role: "user", Content: userPrompt},
 		},
 	}
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return CommandResult{}, fmt.Errorf("deepseek: no se pudo serializar request: %w", err)
+		return fallback, fmt.Errorf("deepseek: no se pudo serializar request: %w", err)
 	}
 
 	url := fmt.Sprintf("%s/api/chat", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return CommandResult{}, fmt.Errorf("deepseek: no se pudo crear request: %w", err)
+		return fallback, fmt.Errorf("deepseek: no se pudo crear request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -110,23 +166,23 @@ func (c *Client) ProcessCommand(ctx context.Context, transcript string, channels
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return CommandResult{}, fmt.Errorf("deepseek: error realizando request: %w", err)
+		return fallback, fmt.Errorf("deepseek: error realizando request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return CommandResult{}, fmt.Errorf("deepseek: status %d: %s", resp.StatusCode, string(body))
+		return fallback, fmt.Errorf("deepseek: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var decoded chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return CommandResult{}, fmt.Errorf("deepseek: no se pudo parsear respuesta: %w", err)
+		return fallback, fmt.Errorf("deepseek: no se pudo parsear respuesta: %w", err)
 	}
 
 	content := strings.TrimSpace(decoded.Message.Content)
 	if content == "" {
-		return CommandResult{}, errors.New("deepseek: respuesta vacía")
+		return fallback, errors.New("deepseek: respuesta vacía")
 	}
 
 	var result CommandResult
@@ -135,25 +191,38 @@ func (c *Client) ProcessCommand(ctx context.Context, transcript string, channels
 	}
 
 	return CommandResult{
-		Reply:  content,
-		Intent: "raw_response",
+		IsCommand: false,
+		Intent:    "conversation",
+		Reply:     content,
+		State:     "normal",
 	}, nil
 }
 
-func buildUserPrompt(transcript string, channels []string) string {
+func buildAnalysisPrompt(transcript string, channels []string, currentState string, pendingChannel string) string {
 	var sb strings.Builder
-	sb.WriteString("Comando transcrito del usuario: ")
+	sb.WriteString("Texto transcrito del usuario: ")
 	sb.WriteString(strconvJSONString(transcript))
 	sb.WriteRune('\n')
 
+	sb.WriteString("Estado actual de conversación: ")
+	sb.WriteString(currentState)
+	sb.WriteRune('\n')
+
+	if pendingChannel != "" {
+		sb.WriteString("Canal pendiente de confirmación: ")
+		sb.WriteString(pendingChannel)
+		sb.WriteRune('\n')
+	}
+
 	if len(channels) == 0 {
-		sb.WriteString("No hay canales públicos registrados actualmente.\n")
+		sb.WriteString("Canales disponibles: ninguno registrado\n")
 	} else {
-		sb.WriteString("Canales públicos disponibles: ")
+		sb.WriteString("Canales disponibles: ")
 		sb.WriteString(strings.Join(channels, ", "))
 		sb.WriteRune('\n')
 	}
-	sb.WriteString("Indica intent según el comando. Usa channels solo si corresponde.")
+
+	sb.WriteString("Analiza si es comando o conversación y responde en JSON.")
 	return sb.String()
 }
 

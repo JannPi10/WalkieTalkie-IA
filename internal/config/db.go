@@ -21,8 +21,6 @@ func ConnectDB() {
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Channel{},
-		&models.ChannelMembership{},
-		&models.RefreshToken{},
 	); err != nil {
 		log.Fatal("Error running migrations:", err)
 	}

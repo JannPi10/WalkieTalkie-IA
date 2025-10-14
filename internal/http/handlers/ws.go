@@ -9,20 +9,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"walkie-backend/pkg/deepseek"
+	"walkie-backend/pkg/stt"
+
+	"github.com/gorilla/websocket"
 )
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 type Client struct {
-	conn        *websocket.Conn
-	channel     string
-	userID      uint
-	displayName string
+	conn              *websocket.Conn
+	channel           string
+	userID            uint
+	displayName       string
+	conversationState string
+	pendingChannel    string
+	isTransmitting    bool
 }
-
-const wakeWord = "gopebot"
 
 var (
 	mtx             = &sync.RWMutex{}
@@ -33,6 +36,10 @@ var (
 	deepseekOnce sync.Once
 	dsClient     *deepseek.Client
 	dsInitErr    error
+
+	sttOnce    sync.Once
+	sttClient  *stt.Client
+	sttInitErr error
 )
 
 func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -62,11 +69,14 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		conn:        conn,
-		channel:     channelName,
-		userID:      uint(time.Now().UnixNano()),
-		displayName: fmt.Sprintf("user-%d", time.Now().UnixNano()%10000),
+		conn:              conn,
+		channel:           channelName,
+		userID:            uint(time.Now().UnixNano()),
+		displayName:       fmt.Sprintf("user-%d", time.Now().UnixNano()%10000),
+		conversationState: "normal",
+		isTransmitting:    false,
 	}
+
 	if !registerClient(client, PublicMaxUsers) {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("Channel is full"))
 		return
@@ -75,7 +85,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("%s connected to %s\n", client.displayName, channelName)
 	_ = conn.WriteJSON(map[string]string{
-		"message": fmt.Sprintf("Connected to channel %s", channelName),
+		"message": fmt.Sprintf("Conectado al canal %s", channelName),
 		"user":    client.displayName,
 	})
 
@@ -86,45 +96,184 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	stt, err := ensureSTTClient()
+	if err != nil {
+		log.Println("ws: STT not available:", err)
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("Speech recognition not available"))
+		return
+	}
+
 	for {
-		_, msg, err := conn.ReadMessage()
+		messageType, msg, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("%s left %s: %v\n", client.displayName, channelName, err)
 			break
 		}
 
-		command := strings.TrimSpace(string(msg))
-		if command == "" {
-			continue
-		}
-		if isControlMessage(strings.ToUpper(command), client, channelName) {
-			continue
-		}
-		if !strings.Contains(strings.ToLower(command), wakeWord) {
-			continue
+		// Manejar comandos de control directo
+		if messageType == websocket.TextMessage {
+			command := strings.TrimSpace(string(msg))
+			if isControlMessage(strings.ToUpper(command), client) {
+				continue
+			}
 		}
 
-		cleaned := stripWakeWord(command, wakeWord)
-		res, err := ds.ProcessCommand(r.Context(), cleaned, publicChannels)
-		if err != nil {
-			log.Println("ws: DeepSeek error:", err)
-			_ = conn.WriteMessage(websocket.TextMessage, []byte("Error processing command with AI"))
+		// Manejar audio binario
+		if messageType == websocket.BinaryMessage {
+			handleAudioMessage(client, msg, ds, stt, r)
 			continue
 		}
-		if res.Intent == "list_channels" && len(res.Channels) == 0 && len(publicChannels) > 0 {
-			res.Channels = append([]string(nil), publicChannels...)
+	}
+}
+
+func handleAudioMessage(client *Client, audioData []byte, ds *deepseek.Client, sttClient *stt.Client, r *http.Request) {
+	// Verificar si es audio humano
+	if !sttClient.IsHumanSpeech(audioData) {
+		log.Printf("Audio no humano detectado de %s, ignorando", client.displayName)
+		return
+	}
+
+	// Convertir audio a texto
+	transcript, err := sttClient.TranscribeAudio(r.Context(), audioData)
+	if err != nil {
+		log.Printf("Error transcribiendo audio de %s: %v", client.displayName, err)
+		return
+	}
+
+	if transcript == "" {
+		log.Printf("Transcripción vacía de %s", client.displayName)
+		return
+	}
+
+	log.Printf("Transcripción de %s: %s", client.displayName, transcript)
+
+	// Analizar si es comando o conversación
+	result, err := ds.AnalyzeTranscript(r.Context(), transcript, publicChannels, client.conversationState, client.pendingChannel)
+	if err != nil {
+		log.Printf("Error analizando transcripción: %v", err)
+		result = deepseek.CommandResult{
+			IsCommand: false,
+			Intent:    "unknown",
+			Reply:     "Lo siento, no pude procesar tu comando. ¿Puedes repetirlo?",
+			State:     "normal",
+		}
+	}
+
+	// Actualizar estado del cliente
+	client.conversationState = result.State
+	client.pendingChannel = result.PendingChannel
+
+	if result.IsCommand {
+		// Es un comando - procesar y responder
+		handleCommand(client, result)
+	} else {
+		// Es conversación - relay audio a otros usuarios del canal
+		if client.channel != "" {
+			startTransmission(client)
+			relayAudioToChannel(client, audioData)
+			// El STOP se enviará cuando termine la transmisión o después de un timeout
+			go func() {
+				time.Sleep(2 * time.Second) // Timeout para finalizar transmisión
+				stopTransmission(client)
+			}()
+		}
+	}
+}
+
+func handleCommand(client *Client, result deepseek.CommandResult) {
+	switch result.Intent {
+	case "confirm_channel_list":
+		if len(result.Channels) == 0 && len(publicChannels) > 0 {
+			result.Channels = append([]string(nil), publicChannels...)
+		}
+		result.Reply = fmt.Sprintf("Aquí tienes los canales disponibles: %s", strings.Join(result.Channels, ", "))
+
+	case "confirm_channel_connect":
+		if client.pendingChannel != "" && isValidChannel(client.pendingChannel) {
+			oldChannel := client.channel
+			switchClientChannel(client, client.pendingChannel)
+			result.Reply = fmt.Sprintf("Te he conectado al %s. ¡Bienvenido!", client.pendingChannel)
+			log.Printf("%s cambió de %s a %s", client.displayName, oldChannel, client.pendingChannel)
+			client.pendingChannel = ""
+		} else {
+			result.Reply = "No hay canal pendiente para conectar."
 		}
 
-		response := map[string]any{
-			"reply":  res.Reply,
-			"intent": res.Intent,
+	case "deny_action":
+		result.Reply = "Entendido, cancelando la acción."
+		client.pendingChannel = ""
+
+	case "request_channel_connect":
+		// Extraer canal del comando
+		if len(result.Channels) > 0 {
+			client.pendingChannel = result.Channels[0]
+			result.Reply = fmt.Sprintf("¿Deseas conectarte al %s?", client.pendingChannel)
+		} else {
+			result.Reply = "¿A qué canal te quieres conectar? Dime canal-1, canal-2, canal-3, canal-4 o canal-5."
 		}
-		if len(res.Channels) > 0 {
-			response["channels"] = res.Channels
+	}
+
+	// Enviar respuesta JSON al cliente
+	response := map[string]any{
+		"reply":  result.Reply,
+		"intent": result.Intent,
+		"state":  result.State,
+	}
+	if len(result.Channels) > 0 {
+		response["channels"] = result.Channels
+	}
+
+	if err := client.conn.WriteJSON(response); err != nil {
+		log.Printf("Error enviando respuesta a %s: %v", client.displayName, err)
+	}
+}
+
+func startTransmission(client *Client) {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	// Marcar cliente como transmitiendo
+	client.isTransmitting = true
+	channelSpeakers[client.channel] = client
+
+	// Enviar START al cliente que habla
+	_ = client.conn.WriteMessage(websocket.TextMessage, []byte("START"))
+
+	// Enviar STOP a todos los demás en el canal
+	for _, other := range channelConns[client.channel] {
+		if other != client {
+			_ = other.conn.WriteMessage(websocket.TextMessage, []byte("STOP"))
 		}
-		if err := conn.WriteJSON(response); err != nil {
-			log.Println("ws: error sending response:", err)
-			break
+	}
+}
+
+func stopTransmission(client *Client) {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	if !client.isTransmitting {
+		return
+	}
+
+	client.isTransmitting = false
+	if channelSpeakers[client.channel] == client {
+		delete(channelSpeakers, client.channel)
+	}
+
+	// Enviar STOP al cliente que terminó de hablar
+	_ = client.conn.WriteMessage(websocket.TextMessage, []byte("STOP"))
+}
+
+func relayAudioToChannel(sender *Client, audioData []byte) {
+	mtx.RLock()
+	defer mtx.RUnlock()
+
+	// Enviar audio a todos los demás usuarios del canal
+	for _, client := range channelConns[sender.channel] {
+		if client != sender {
+			if err := client.conn.WriteMessage(websocket.BinaryMessage, audioData); err != nil {
+				log.Printf("Error enviando audio a %s: %v", client.displayName, err)
+			}
 		}
 	}
 }
@@ -168,7 +317,11 @@ func unregisterClient(c *Client) {
 func GetUsersInChannel(channel string) []string {
 	mtx.RLock()
 	defer mtx.RUnlock()
-	return append([]string(nil), usersByChannel[channel]...)
+	users := usersByChannel[channel]
+	if len(users) == 0 {
+		return []string{}
+	}
+	return append([]string(nil), users...)
 }
 
 func ensureDeepSeekClient() (*deepseek.Client, error) {
@@ -178,33 +331,58 @@ func ensureDeepSeekClient() (*deepseek.Client, error) {
 	return dsClient, dsInitErr
 }
 
-func stripWakeWord(input, wake string) string {
-	lower := strings.ToLower(input)
-	idx := strings.Index(lower, wake)
-	if idx == -1 {
-		return strings.TrimSpace(input)
-	}
-	return strings.TrimSpace(input[idx+len(wake):])
+func ensureSTTClient() (*stt.Client, error) {
+	sttOnce.Do(func() {
+		sttClient, sttInitErr = stt.NewClient()
+	})
+	return sttClient, sttInitErr
 }
 
-func isControlMessage(cmd string, client *Client, channel string) bool {
+func isValidChannel(channel string) bool {
+	validChannels := []string{"canal-1", "canal-2", "canal-3", "canal-4", "canal-5"}
+	for _, valid := range validChannels {
+		if channel == valid {
+			return true
+		}
+	}
+	return false
+}
+
+func switchClientChannel(client *Client, newChannel string) {
+	mtx.Lock()
+	defer mtx.Unlock()
+
+	// Remover del canal actual
+	oldChannel := client.channel
+	var remain []*Client
+	for _, other := range channelConns[oldChannel] {
+		if other != client {
+			remain = append(remain, other)
+		}
+	}
+	channelConns[oldChannel] = remain
+
+	var names []string
+	for _, name := range usersByChannel[oldChannel] {
+		if name != client.displayName {
+			names = append(names, name)
+		}
+	}
+	usersByChannel[oldChannel] = names
+
+	// Añadir al nuevo canal
+	client.channel = newChannel
+	channelConns[newChannel] = append(channelConns[newChannel], client)
+	usersByChannel[newChannel] = append(usersByChannel[newChannel], client.displayName)
+}
+
+func isControlMessage(cmd string, client *Client) bool {
 	switch cmd {
 	case "START":
-		mtx.Lock()
-		defer mtx.Unlock()
-		if _, busy := channelSpeakers[channel]; !busy {
-			channelSpeakers[channel] = client
-			_ = client.conn.WriteMessage(websocket.TextMessage, []byte("Puedes hablar"))
-		} else {
-			_ = client.conn.WriteMessage(websocket.TextMessage, []byte("Otro usuario está hablando"))
-		}
+		startTransmission(client)
 		return true
 	case "STOP":
-		mtx.Lock()
-		defer mtx.Unlock()
-		if channelSpeakers[channel] == client {
-			delete(channelSpeakers, channel)
-		}
+		stopTransmission(client)
 		return true
 	default:
 		return false
