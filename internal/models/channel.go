@@ -4,9 +4,9 @@ import "gorm.io/gorm"
 
 type Channel struct {
 	gorm.Model
-	Name      string `gorm:"uniqueIndex"`
-	IsPrivate bool
-	PinHash   *string
+	Code      string `gorm:"uniqueIndex"`
+	Name      string
 	MaxUsers  int
-	CreatorID uint
+	IsPrivate bool
+	Members   []ChannelMembership
 }

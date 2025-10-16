@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 
+	"walkie-backend/internal/config"
 	httproutes "walkie-backend/internal/http"
 
 	"github.com/joho/godotenv"
@@ -12,6 +13,7 @@ import (
 
 func main() {
 	_ = godotenv.Load(".env")
+	config.ConnectDB()
 
 	mux := http.NewServeMux()
 	httproutes.Routes(mux)

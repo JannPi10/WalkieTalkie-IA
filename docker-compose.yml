@@ -15,6 +15,58 @@ services:
       timeout: 10s
       retries: 10
 
+  stt:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: faster-whisper-local
+    restart: unless-stopped
+    ports:
+      - "8087:8000"
+    environment:
+      - SPEACHES_MODELS__TRANSCRIBE__DEFAULT=Systran/faster-whisper-small
+      - SPEACHES_MODELS__TRANSCRIBE__AUTO_DOWNLOAD=true
+      - SPEACHES_MODELS__TRANSCRIBE__FORCE_LANGUAGE=es
+      - SPEACHES_CACHE_DIR=/root/.cache/huggingface
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    healthcheck:
+      # Usa /health si existe; si no, usa "/" como fallback.
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health || curl -sf http://127.0.0.1:8000/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  stt-warmup:
+    image: curlimages/curl:8.10.1
+    depends_on:
+      stt:
+        condition: service_healthy
+    command: >
+      sh -c "
+        echo 'Warming up Systran/faster-whisper-small...';
+        curl -sS -X POST http://stt:8000/v1/models/Systran/faster-whisper-small &&
+        echo 'Warmup OK' || (echo 'Warmup FAILED' && exit 1)
+      "
+    restart: "no"
+
+  db:
+    image: postgres:16
+    container_name: walkie_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=gopenux
+      - POSTGRES_PASSWORD=gopenux1234
+      - POSTGRES_DB=walkie_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gopenux -d walkie_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   app:
     build: .
     container_name: walkie_backend-IA
@@ -25,6 +77,12 @@ services:
     depends_on:
       deepseek:
         condition: service_healthy
+      stt:
+        condition: service_started
+      db:
+        condition: service_healthy
 
 volumes:
   ollama:
+  hf-cache:
+  pgdata:
