@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -14,32 +15,65 @@ import (
 )
 
 const (
-	defaultModel   = "deepseek-r1:7b"
+	defaultModel   = "llama3.2:3b"
 	defaultBaseURL = "http://deepseek:11434"
-	systemPrompt   = `Eres un asistente de walkie-talkie. Analiza la transcripción de voz y decide si es COMANDO o conversación.
+	systemPrompt   = `Eres un asistente de walkie-talkie que analiza transcripciones de voz en español para determinar si son COMANDOS o conversación normal.
 
-COMANDOS:
-- Lista de canales (intents: request_channel_list, confirm_channel_list)
-- Conectarse a canal (request_channel_connect, confirm_channel_connect) con patrones "conéctame al canal-X", "cambiar al canal-X", etc.
-- Salir del canal actual (request_channel_disconnect, confirm_channel_disconnect) con frases "salir del canal", "quitarme del canal".
-- Confirmaciones positivas: "sí", "yes", "claro", etc.
-- Negaciones: "no", "cancelar".
+COMANDOS VÁLIDOS:
+1. LISTAR CANALES:
+   - "tráeme la lista de canales"
+   - "dame la lista de canales" 
+   - "cuáles son los canales"
+   - "qué canales hay"
+   - "lista de canales"
+   - "canales disponibles"
 
-ESTADOS:
-- sin_canal: usuario sin canal asignado.
-- <canal>: código del canal actual (ej. canal-1).
+2. CONECTAR A CANAL:
+   - "conectarme al canal-X" (donde X es: 1, 2, 3, 4, 5)
+   - "conectame al canal-X"
+   - "cambiar al canal-X"
+   - "ir al canal-X"
+   - "entrar al canal-X"
+   - "úneme al canal-X"
 
-RESPONDE SIEMPRE EN JSON válido:
+3. DESCONECTAR DEL CANAL:
+   - "salir del canal"
+   - "desconectarme del canal"
+   - "quitarme del canal"
+   - "abandonar el canal"
+
+ESTADOS DEL USUARIO:
+- "sin_canal": usuario no está en ningún canal
+- "canal-X": usuario está en el canal X (canal-1, canal-2, etc.)
+
+RESPUESTA REQUERIDA:
+Responde SOLO con JSON válido, sin texto adicional ni markdown:
 {
-  "is_command": bool,
+  "is_command": true/false,
   "intent": "nombre_del_intent",
-  "reply": "texto en español",
-  "channels": ["opcional canal"],
-  "state": "estado",
-  "pending_channel": "opcional"
+  "reply": "respuesta en español",
+  "channels": ["canal-X"] (solo si aplica),
+  "state": "estado_actual",
+  "pending_channel": "" (opcional)
 }
 
-Si no es comando, marca is_command=false e intento "conversation".`
+INTENTS VÁLIDOS:
+- "request_channel_list": para listar canales
+- "request_channel_connect": para conectar a canal
+- "request_channel_disconnect": para desconectar
+- "conversation": para conversación normal
+
+EJEMPLOS:
+Entrada: "tráeme la lista de canales"
+Salida: {"is_command": true, "intent": "request_channel_list", "reply": "Te traigo la lista de canales", "channels": [], "state": "sin_canal"}
+
+Entrada: "conectarme al canal-1"
+Salida: {"is_command": true, "intent": "request_channel_connect", "reply": "Te conecto al canal-1", "channels": ["canal-1"], "state": "sin_canal"}
+
+Entrada: "hola cómo están"
+Salida: {"is_command": false, "intent": "conversation", "reply": "hola cómo están", "channels": [], "state": "sin_canal"}
+
+IMPORTANTE: Responde ÚNICAMENTE con el JSON, sin explicaciones ni formato markdown.`
 )
 
 type Client struct {
@@ -154,11 +188,61 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 		return fallback, errors.New("deepseek: respuesta vacía")
 	}
 
+	// Extraer JSON de respuesta markdown si es necesario
+	jsonContent := extractJSONFromResponse(content)
+
 	var result CommandResult
-	if err := json.Unmarshal([]byte(content), &result); err != nil {
+	if err := json.Unmarshal([]byte(jsonContent), &result); err != nil {
+		// Log para debugging
+		log.Printf("DEBUG: Respuesta de Deepseek: %s", content)
+		log.Printf("DEBUG: JSON extraído: %s", jsonContent)
 		return fallback, fmt.Errorf("deepseek: json inválido: %w", err)
 	}
 	return result, nil
+}
+
+// extractJSONFromResponse extrae JSON de una respuesta que puede estar en formato markdown
+func extractJSONFromResponse(content string) string {
+	content = strings.TrimSpace(content)
+
+	// Si ya es JSON válido, devolverlo tal como está
+	if strings.HasPrefix(content, "{") && strings.HasSuffix(content, "}") {
+		return content
+	}
+
+	// Buscar JSON dentro de bloques de código markdown
+	if strings.Contains(content, "```") {
+		lines := strings.Split(content, "\n")
+		var jsonLines []string
+		inCodeBlock := false
+
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "```") {
+				inCodeBlock = !inCodeBlock
+				continue
+			}
+			if inCodeBlock && line != "" {
+				jsonLines = append(jsonLines, line)
+			}
+		}
+
+		if len(jsonLines) > 0 {
+			return strings.Join(jsonLines, "\n")
+		}
+	}
+
+	// Buscar líneas que contengan JSON
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "{") && strings.HasSuffix(line, "}") {
+			return line
+		}
+	}
+
+	// Como último recurso, devolver el contenido original
+	return content
 }
 
 func buildAnalysisPrompt(transcript string, channels []string, currentState string, pendingChannel string) string {
@@ -185,7 +269,7 @@ func buildAnalysisPrompt(transcript string, channels []string, currentState stri
 		sb.WriteRune('\n')
 	}
 
-	sb.WriteString("Devuelve JSON siguiendo el formato indicado.")
+	sb.WriteString("Responde ÚNICAMENTE con JSON válido.")
 	return sb.String()
 }
 

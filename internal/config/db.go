@@ -41,37 +41,48 @@ func ConnectDB() {
 }
 
 func seedDatabase(db *gorm.DB) {
+	// Seed canales (5 canales como especificado)
 	channels := []models.Channel{
-		{Code: "canal-1", Name: "Canal 1", MaxUsers: 100},
-		{Code: "canal-2", Name: "Canal 2", MaxUsers: 100},
-		{Code: "canal-3", Name: "Canal 3", MaxUsers: 100},
-		{Code: "canal-4", Name: "Canal 4", MaxUsers: 100},
-		{Code: "canal-5", Name: "Canal 5", MaxUsers: 100},
+		{Code: "canal-1", Name: "Canal 1", MaxUsers: 100, IsPrivate: false},
+		{Code: "canal-2", Name: "Canal 2", MaxUsers: 100, IsPrivate: false},
+		{Code: "canal-3", Name: "Canal 3", MaxUsers: 100, IsPrivate: false},
+		{Code: "canal-4", Name: "Canal 4", MaxUsers: 100, IsPrivate: false},
+		{Code: "canal-5", Name: "Canal 5", MaxUsers: 100, IsPrivate: false},
 	}
+
 	for _, ch := range channels {
 		var count int64
 		db.Model(&models.Channel{}).Where("code = ?", ch.Code).Count(&count)
 		if count == 0 {
 			if err := db.Create(&ch).Error; err != nil {
-				log.Printf("seed channel %s: %v", ch.Code, err)
+				log.Printf("Error seeding channel %s: %v", ch.Code, err)
+			} else {
+				log.Printf("Canal creado: %s", ch.Code)
 			}
 		}
 	}
 
+	// Seed usuarios (10 usuarios como especificado)
 	for i := 1; i <= 10; i++ {
-		display := fmt.Sprintf("usuario-%02d", i)
-		email := fmt.Sprintf("%s@example.com", display)
+		displayName := fmt.Sprintf("usuario-%02d", i)
+		email := fmt.Sprintf("%s@example.com", displayName)
+
 		var count int64
-		db.Model(&models.User{}).Where("display_name = ?", display).Count(&count)
+		db.Model(&models.User{}).Where("display_name = ?", displayName).Count(&count)
 		if count == 0 {
 			user := models.User{
-				DisplayName:  display,
+				DisplayName:  displayName,
 				Email:        email,
+				IsActive:     true,
 				LastActiveAt: time.Now(),
 			}
 			if err := db.Create(&user).Error; err != nil {
-				log.Printf("seed user %s: %v", display, err)
+				log.Printf("Error seeding user %s: %v", displayName, err)
+			} else {
+				log.Printf("Usuario creado: %s (ID: %d)", displayName, user.ID)
 			}
 		}
 	}
+
+	log.Println("Database seeding completed")
 }
