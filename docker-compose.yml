@@ -22,9 +22,9 @@ services:
         condition: service_healthy
     entrypoint: [ "/bin/bash", "-c" ]
     command: >
-      "echo 'Descargando modelo llama3.2:3b...';
-       OLLAMA_HOST=http://deepseek:11434 ollama pull llama3.2:3b &&
-       echo 'Modelo llama3.2:3b descargado exitosamente' || 
+      "echo 'Descargando modelo qwen2.5:0.5b...';
+       OLLAMA_HOST=http://deepseek:11434 ollama pull qwen2.5:0.5b &&
+       echo 'Modelo qwen2.5:0.5b descargado exitosamente' || 
        (echo 'Error descargando modelo' && exit 1)"
     environment:
       - OLLAMA_HOST=http://deepseek:11434

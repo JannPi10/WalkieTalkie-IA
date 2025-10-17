@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultModel   = "llama3.2:3b"
+	defaultModel   = "qwen2.5:0.5b"
 	defaultBaseURL = "http://deepseek:11434"
 	systemPrompt   = `Eres un asistente de walkie-talkie que analiza transcripciones de voz en español para determinar si son COMANDOS o conversación normal.
 
@@ -121,7 +121,7 @@ func NewClient() (*Client, error) {
 	apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
 
 	return &Client{
-		httpClient: &http.Client{Timeout: 120 * time.Second},
+		httpClient: &http.Client{Timeout: 180 * time.Second},
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		apiKey:     apiKey,
 		model:      model,
