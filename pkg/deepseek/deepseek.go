@@ -15,65 +15,75 @@ import (
 )
 
 const (
-	defaultModel   = "qwen2.5:0.5b"
+	defaultModel   = "qwen2.5:1.5b"
 	defaultBaseURL = "http://deepseek:11434"
-	systemPrompt   = `Eres un asistente de walkie-talkie que analiza transcripciones de voz en español para determinar si son COMANDOS o conversación normal.
+	systemPrompt   = `Eres un asistente de walkie-talkie. Tu ÚNICA función es detectar COMANDOS EXPLÍCITOS de sistema.
 
-COMANDOS VÁLIDOS:
-1. LISTAR CANALES:
-   - "tráeme la lista de canales"
-   - "dame la lista de canales" 
-   - "cuáles son los canales"
-   - "qué canales hay"
-   - "lista de canales"
-   - "canales disponibles"
+REGLA #1: Solo marca como comando si la frase contiene LITERALMENTE las palabras clave exactas.
 
-2. CONECTAR A CANAL:
-   - "conectarme al canal-X" (donde X es: 1, 2, 3, 4, 5)
-   - "conectame al canal-X"
-   - "cambiar al canal-X"
-   - "ir al canal-X"
-   - "entrar al canal-X"
-   - "úneme al canal-X"
+COMANDOS VÁLIDOS (SOLO ESTOS):
 
-3. DESCONECTAR DEL CANAL:
-   - "salir del canal"
-   - "desconectarme del canal"
-   - "quitarme del canal"
-   - "abandonar el canal"
+1. LISTAR CANALES - requiere TODAS estas palabras:
+   ✓ "lista" Y "canales"
+   ✓ "tráeme" Y "canales"
+   ✓ "dame" Y "canales"
+   ✓ "cuáles" Y "canales"
+   ✓ "qué canales"
+   ✓ "canales disponibles"
 
-ESTADOS DEL USUARIO:
-- "sin_canal": usuario no está en ningún canal
-- "canal-X": usuario está en el canal X (canal-1, canal-2, etc.)
+2. CONECTAR A CANAL - requiere:
+   ✓ "conecta" Y número
+   ✓ "conectar" Y número
+   ✓ "cambiar" Y "canal" Y número
+   ✓ "ir" Y "canal" Y número
+   ✓ "entrar" Y "canal" Y número
 
-RESPUESTA REQUERIDA:
-Responde SOLO con JSON válido, sin texto adicional ni markdown:
+3. DESCONECTAR - requiere:
+   ✓ "salir" Y "canal"
+   ✓ "desconectar" Y "canal"
+
+TODO LO DEMÁS ES CONVERSACIÓN, incluyendo:
+✗ Saludos: "hola", "buenos días", "qué tal"
+✗ Preguntas generales: "cómo estás", "qué haces", "cómo te va"
+✗ Conversación casual: cualquier frase que NO contenga las palabras clave exactas
+✗ Nombres de personas: "Carlos", "María", "Juan"
+
+EJEMPLOS DE COMANDOS:
+{"is_command": true, "intent": "request_channel_list", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "tráeme la lista de canales"
+
+{"is_command": true, "intent": "request_channel_connect", "reply": "", "channels": ["canal-1"], "state": "sin_canal"}
+Entrada: "conectarme al canal 1"
+
+{"is_command": true, "intent": "request_channel_disconnect", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "salir del canal"
+
+EJEMPLOS DE CONVERSACIÓN (NO SON COMANDOS):
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "hola carlos cómo estás"
+
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "qué estás haciendo"
+
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "buenas tardes a todos"
+
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "carlos cómo está que está haciendo"
+
+FORMATO DE RESPUESTA (SOLO JSON, SIN MARKDOWN):
 {
   "is_command": true/false,
-  "intent": "nombre_del_intent",
-  "reply": "respuesta en español",
-  "channels": ["canal-X"] (solo si aplica),
-  "state": "estado_actual",
-  "pending_channel": "" (opcional)
+  "intent": "request_channel_list" | "request_channel_connect" | "request_channel_disconnect" | "conversation",
+  "reply": "",
+  "channels": ["canal-X"] (solo si intent=request_channel_connect),
+  "state": "sin_canal" | "canal-X"
 }
 
-INTENTS VÁLIDOS:
-- "request_channel_list": para listar canales
-- "request_channel_connect": para conectar a canal
-- "request_channel_disconnect": para desconectar
-- "conversation": para conversación normal
-
-EJEMPLOS:
-Entrada: "tráeme la lista de canales"
-Salida: {"is_command": true, "intent": "request_channel_list", "reply": "Te traigo la lista de canales", "channels": [], "state": "sin_canal"}
-
-Entrada: "conectarme al canal-1"
-Salida: {"is_command": true, "intent": "request_channel_connect", "reply": "Te conecto al canal-1", "channels": ["canal-1"], "state": "sin_canal"}
-
-Entrada: "hola cómo están"
-Salida: {"is_command": false, "intent": "conversation", "reply": "hola cómo están", "channels": [], "state": "sin_canal"}
-
-IMPORTANTE: Responde ÚNICAMENTE con el JSON, sin explicaciones ni formato markdown.`
+IMPORTANTE: 
+- Responde SOLO el JSON, sin explicaciones
+- Si tienes duda, marca como conversación (is_command: false)
+- Solo marca comando si estás 100% seguro de las palabras clave`
 )
 
 type Client struct {
@@ -198,6 +208,21 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 		log.Printf("DEBUG: JSON extraído: %s", jsonContent)
 		return fallback, fmt.Errorf("deepseek: json inválido: %w", err)
 	}
+
+	// Validación adicional: si el intent no es válido, forzar conversación
+	validIntents := map[string]bool{
+		"request_channel_list":       true,
+		"request_channel_connect":    true,
+		"request_channel_disconnect": true,
+		"conversation":               true,
+	}
+
+	if !validIntents[result.Intent] {
+		log.Printf("WARN: Intent inválido '%s', forzando conversación", result.Intent)
+		result.IsCommand = false
+		result.Intent = "conversation"
+	}
+
 	return result, nil
 }
 
@@ -247,29 +272,28 @@ func extractJSONFromResponse(content string) string {
 
 func buildAnalysisPrompt(transcript string, channels []string, currentState string, pendingChannel string) string {
 	var sb strings.Builder
-	sb.WriteString("Texto transcrito: ")
-	sb.WriteString(strconvJSONString(transcript))
-	sb.WriteRune('\n')
+	sb.WriteString("Analiza este texto:\n")
+	sb.WriteString("\"")
+	sb.WriteString(transcript)
+	sb.WriteString("\"\n\n")
 
 	sb.WriteString("Estado actual: ")
 	sb.WriteString(currentState)
-	sb.WriteRune('\n')
+	sb.WriteString("\n")
 
 	if pendingChannel != "" {
 		sb.WriteString("Canal pendiente: ")
 		sb.WriteString(pendingChannel)
-		sb.WriteRune('\n')
+		sb.WriteString("\n")
 	}
 
-	if len(channels) == 0 {
-		sb.WriteString("Canales disponibles: ninguno\n")
-	} else {
+	if len(channels) > 0 {
 		sb.WriteString("Canales disponibles: ")
 		sb.WriteString(strings.Join(channels, ", "))
-		sb.WriteRune('\n')
+		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Responde ÚNICAMENTE con JSON válido.")
+	sb.WriteString("\nRecuerda: Solo marca como comando si contiene palabras clave EXACTAS. En caso de duda, marca como conversación.")
 	return sb.String()
 }
 

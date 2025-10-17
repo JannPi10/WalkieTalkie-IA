@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -16,6 +17,17 @@ import (
 	"walkie-backend/internal/services"
 	"walkie-backend/pkg/deepseek"
 )
+
+// AudioRelayResponse es la respuesta cuando el audio se envía a otros usuarios
+type AudioRelayResponse struct {
+	Status      string  `json:"status"`
+	Channel     string  `json:"channel"`
+	Recipients  []uint  `json:"recipients"`
+	AudioBase64 string  `json:"audioBase64"`
+	Duration    float64 `json:"duration"`
+	SampleRate  int     `json:"sampleRate"`
+	Format      string  `json:"format"`
+}
 
 // executeCommand ejecuta un comando específico
 func executeCommand(user *models.User, userService *services.UserService, result deepseek.CommandResult) (string, error) {
@@ -48,10 +60,31 @@ func handleChannelListCommand(userService *services.UserService) (string, error)
 		return "No hay canales disponibles", nil
 	}
 
+	// Crear lista más natural para voz
 	var response strings.Builder
-	response.WriteString("Canales disponibles:\n")
+	response.WriteString("Canales disponibles: ")
+
+	channelNames := make([]string, 0, len(channels))
 	for _, ch := range channels {
-		response.WriteString(fmt.Sprintf("- %s: %s\n", ch.Code, ch.Name))
+		// Extraer solo el número del código (canal-1 -> 1)
+		channelNum := strings.TrimPrefix(ch.Code, "canal-")
+		channelNames = append(channelNames, channelNum)
+	}
+
+	// Unir con comas: "1, 2, 3, 4 y 5"
+	if len(channelNames) == 1 {
+		response.WriteString(channelNames[0])
+	} else if len(channelNames) == 2 {
+		response.WriteString(fmt.Sprintf("%s y %s", channelNames[0], channelNames[1]))
+	} else {
+		lastIdx := len(channelNames) - 1
+		for i, name := range channelNames {
+			if i == lastIdx {
+				response.WriteString(fmt.Sprintf("y %s", name))
+			} else {
+				response.WriteString(fmt.Sprintf("%s, ", name))
+			}
+		}
 	}
 
 	return response.String(), nil
@@ -66,7 +99,9 @@ func handleChannelConnectCommand(user *models.User, userService *services.UserSe
 	// Notificar via WebSocket el cambio de canal
 	moveClientToChannel(user.ID, channelCode)
 
-	return fmt.Sprintf("Conectado al canal %s", channelCode), nil
+	// Extraer número del canal para respuesta más natural
+	channelNum := strings.TrimPrefix(channelCode, "canal-")
+	return fmt.Sprintf("Conectado al canal %s", channelNum), nil
 }
 
 // handleChannelDisconnectCommand maneja el comando de desconectar del canal
@@ -83,10 +118,13 @@ func handleChannelDisconnectCommand(user *models.User, userService *services.Use
 	// Notificar via WebSocket la desconexión
 	moveClientToChannel(user.ID, "")
 
-	return fmt.Sprintf("Desconectado del canal %s", currentChannel), nil
+	// Extraer número del canal para respuesta más natural
+	channelNum := strings.TrimPrefix(currentChannel, "canal-")
+	return fmt.Sprintf("Desconectado del canal %s", channelNum), nil
 }
 
 // handleAsConversation maneja el audio como conversación
+// MODIFICADO: Ahora devuelve JSON con el audio para que Android lo reproduzca
 func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []byte) {
 	channelCode := user.GetCurrentChannelCode()
 	if channelCode == "" {
@@ -96,21 +134,55 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 
 	log.Printf("Enviando audio de usuario %d a canal %s", user.ID, channelCode)
 
-	// Enviar señales STOP/START y audio via WebSocket
+	// 1. Enviar señales STOP/START via WebSocket a usuarios conectados
 	startTransmission(channelCode, user.ID)
 
-	// Enviar audio a otros usuarios del canal
+	// 2. Enviar audio via WebSocket a usuarios conectados (en tiempo real)
 	broadcastAudio(channelCode, user.ID, audioData)
 
-	// Estimar duración del audio y programar STOP
+	// 3. Estimar duración del audio
 	duration := estimateAudioDuration(audioData)
+
+	// 4. Programar detención de transmisión
 	go func() {
 		time.Sleep(duration)
 		stopTransmission(channelCode, user.ID)
 	}()
 
-	// Responder con 204 No Content (no hay texto que devolver)
-	w.WriteHeader(http.StatusNoContent)
+	// 5. Obtener lista de usuarios en el canal (EXCLUIR al sender)
+	channelUsers := GetChannelUsers(channelCode)
+	capacity := len(channelUsers)
+	if capacity > 0 {
+		capacity-- // Restar 1 solo si hay usuarios
+	}
+	recipients := make([]uint, 0, capacity)
+	for _, uid := range channelUsers {
+		if uid != user.ID { // Excluir al sender
+			recipients = append(recipients, uid)
+		}
+	}
+
+	// 6. Preparar respuesta JSON SIN el audio (el sender no lo necesita)
+	response := AudioRelayResponse{
+		Status:      "relayed",
+		Channel:     channelCode,
+		Recipients:  recipients,
+		AudioBase64: "",
+		Duration:    duration.Seconds(),
+		SampleRate:  16000,
+		Format:      "wav",
+	}
+
+	// 7. Enviar respuesta JSON al cliente que envió el audio
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error codificando respuesta JSON: %v", err)
+		http.Error(w, "Error interno", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("Audio enviado exitosamente: usuario=%d, canal=%s, destinatarios=%d, duración=%.2fs",
+		user.ID, channelCode, len(channelUsers), duration.Seconds())
 }
 
 // --------------------------- helpers ---------------------------
@@ -136,7 +208,7 @@ func readAudioFromRequest(r *http.Request) ([]byte, error) {
 			return nil, err
 		}
 		defer part.Close()
-		return io.ReadAll(io.LimitReader(part, 20<<20)) // 20 MB
+		return io.ReadAll(io.LimitReader(part, 20<<20)) // 20 MB max
 	}
 
 	// raw audio/*
@@ -144,8 +216,30 @@ func readAudioFromRequest(r *http.Request) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r.Body, 20<<20))
 }
 
+// isValidWAVFormat valida que el audio sea formato WAV válido
+func isValidWAVFormat(data []byte) bool {
+	if len(data) < 44 {
+		return false
+	}
+	// Verificar header RIFF y WAVE
+	return string(data[0:4]) == "RIFF" && string(data[8:12]) == "WAVE"
+}
+
 func isLikelyCoherent(s string) bool {
 	// Heurística mejorada para detectar habla coherente
+	s = strings.TrimSpace(s)
+
+	// Aceptar frases muy cortas comunes
+	if len(s) <= 5 {
+		common := []string{"si", "sí", "no", "ok", "vale", "bien"}
+		lower := strings.ToLower(s)
+		for _, word := range common {
+			if lower == word {
+				return true
+			}
+		}
+	}
+
 	if len(s) < 3 {
 		return false
 	}
@@ -167,25 +261,28 @@ func isLikelyCoherent(s string) bool {
 				}
 			}
 		}
-		if alpha >= 2 && hasVowel {
+		if alpha >= 1 && hasVowel {
 			wordCount++
 		}
 	}
 
-	// Criterios más estrictos
-	return letters >= 6 && vowels >= 2 && wordCount >= 2
+	// Criterios más flexibles
+	return letters >= 3 && vowels >= 1 && wordCount >= 1
 }
 
 func estimateAudioDuration(audioData []byte) time.Duration {
-	// Estimación básica: asumiendo WAV 16kHz, 16-bit, mono
-	// 44 bytes de header WAV típico
+	// Estimación para WAV 16kHz, 16-bit, mono
 	dataSize := len(audioData)
-	if dataSize > 44 && string(audioData[:4]) == "RIFF" {
-		dataSize -= 44 // Quitar header WAV
+
+	// Verificar y quitar header WAV
+	if dataSize > 44 && string(audioData[:4]) == "RIFF" && string(audioData[8:12]) == "WAVE" {
+		dataSize -= 44
 	}
 
-	// 16kHz * 2 bytes = 32000 bytes por segundo
+	// 16kHz * 2 bytes (16-bit) = 32000 bytes por segundo
 	seconds := float64(dataSize) / 32000.0
+
+	// Límites de seguridad
 	if seconds < 0.5 {
 		seconds = 0.5 // Mínimo 500ms
 	}

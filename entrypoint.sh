@@ -22,4 +22,3 @@ echo "Warmup finalizado."
 
 # 4) Mantén el proceso principal en foreground
 wait $PID
-

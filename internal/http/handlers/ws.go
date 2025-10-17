@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"walkie-backend/internal/config"
 	"walkie-backend/internal/models"
@@ -12,15 +13,29 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	// Límites de seguridad
+	maxAudioSize   = 10 * 1024 * 1024 // 10 MB
+	pingInterval   = 30 * time.Second
+	pongWait       = 60 * time.Second
+	writeWait      = 10 * time.Second
+	maxMessageSize = 15 * 1024 * 1024 // 15 MB
+)
+
 type wsClient struct {
 	conn    *websocket.Conn
 	userID  uint
 	channel string
 	mu      sync.Mutex
+	send    chan []byte
 }
 
 var (
-	upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	upgrader = websocket.Upgrader{
+		CheckOrigin:     func(r *http.Request) bool { return true },
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
 
 	registry = struct {
 		sync.RWMutex
@@ -39,14 +54,24 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Configurar límites
+	conn.SetReadLimit(maxMessageSize)
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
 	var client *wsClient
 	defer func() {
 		if client != nil {
 			removeClient(client)
+			close(client.send)
 		}
 		conn.Close()
 	}()
 
+	// Leer handshake
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
 		log.Printf("ws handshake read: %v", err)
@@ -62,6 +87,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validar usuario
 	var user models.User
 	if err := config.DB.Preload("CurrentChannel").First(&user, handshake.UserID).Error; err != nil {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("Usuario no encontrado"))
@@ -73,7 +99,12 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		channel = user.CurrentChannel.Code
 	}
 
-	client = &wsClient{conn: conn, userID: user.ID, channel: channel}
+	client = &wsClient{
+		conn:    conn,
+		userID:  user.ID,
+		channel: channel,
+		send:    make(chan []byte, 256),
+	}
 	registerClient(client)
 
 	log.Printf("Cliente WebSocket conectado: usuario=%d, canal=%s", user.ID, channel)
@@ -83,10 +114,74 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"channel": channel,
 	})
 
+	// Iniciar goroutines para lectura y escritura
+	go client.writePump()
+	go client.readPump()
+}
+
+// readPump lee mensajes del WebSocket
+func (c *wsClient) readPump() {
+	defer func() {
+		removeClient(c)
+		c.conn.Close()
+	}()
+
+	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
-			log.Printf("ws closed user=%d: %v", client.userID, err)
-			return
+		_, _, err := c.conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("ws error user=%d: %v", c.userID, err)
+			}
+			break
+		}
+	}
+}
+
+// writePump envía mensajes al WebSocket
+func (c *wsClient) writePump() {
+	ticker := time.NewTicker(pingInterval)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			w, err := c.conn.NextWriter(websocket.BinaryMessage)
+			if err != nil {
+				return
+			}
+			w.Write(message)
+
+			// Agregar mensajes en cola
+			n := len(c.send)
+			for i := 0; i < n; i++ {
+				w.Write(<-c.send)
+			}
+
+			if err := w.Close(); err != nil {
+				return
+			}
+
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }
@@ -172,27 +267,33 @@ func startTransmission(channel string, speakerID uint) {
 
 	clients := registry.byChannel[channel]
 	if len(clients) == 0 {
-		log.Printf("No hay clientes en canal %s para iniciar transmisión", channel)
+		log.Printf("No hay clientes WebSocket en canal %s para iniciar transmisión", channel)
 		return
 	}
 
 	log.Printf("Iniciando transmisión en canal %s, hablante=%d", channel, speakerID)
 
+	message := map[string]interface{}{
+		"type":   "transmission",
+		"from":   speakerID,
+		"action": "start",
+	}
+
 	for id, c := range clients {
-		signal := "STOP"
+		// STOP para todos excepto el que habla
 		if id == speakerID {
-			signal = "START"
+			message["signal"] = "START" // El que habla puede seguir
+		} else {
+			message["signal"] = "STOP" // Los demás deben callar
 		}
 
+		msgBytes, _ := json.Marshal(message)
 		c.mu.Lock()
-		err := c.conn.WriteJSON(map[string]string{
-			"type":   "transmission",
-			"signal": signal,
-		})
+		err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
 		c.mu.Unlock()
 
 		if err != nil {
-			log.Printf("Error enviando señal %s a usuario %d: %v", signal, id, err)
+			log.Printf("Error enviando señal START a usuario %d: %v", id, err)
 		}
 	}
 }
@@ -203,42 +304,49 @@ func stopTransmission(channel string, speakerID uint) {
 
 	clients := registry.byChannel[channel]
 	if len(clients) == 0 {
-		log.Printf("No hay clientes en canal %s para detener transmisión", channel)
+		log.Printf("No hay clientes WebSocket en canal %s para detener transmisión", channel)
 		return
 	}
 
 	log.Printf("Deteniendo transmisión en canal %s, hablante=%d", channel, speakerID)
 
-	for id, c := range clients {
-		signal := "START"
-		if id == speakerID {
-			signal = "STOP"
-		}
+	message := map[string]interface{}{
+		"type":   "transmission",
+		"from":   speakerID,
+		"action": "stop",
+		"signal": "START", // Todos pueden hablar de nuevo
+	}
 
+	msgBytes, _ := json.Marshal(message)
+
+	for id, c := range clients {
 		c.mu.Lock()
-		err := c.conn.WriteJSON(map[string]string{
-			"type":   "transmission",
-			"signal": signal,
-		})
+		err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
 		c.mu.Unlock()
 
 		if err != nil {
-			log.Printf("Error enviando señal %s a usuario %d: %v", signal, id, err)
+			log.Printf("Error enviando señal STOP a usuario %d: %v", id, err)
 		}
 	}
 }
 
 func broadcastAudio(channel string, senderID uint, audio []byte) {
+	// Validar tamaño del audio
+	if len(audio) > maxAudioSize {
+		log.Printf("Audio demasiado grande: %d bytes (max: %d)", len(audio), maxAudioSize)
+		return
+	}
+
 	registry.RLock()
 	defer registry.RUnlock()
 
 	clients := registry.byChannel[channel]
 	if len(clients) == 0 {
-		log.Printf("No hay clientes en canal %s para broadcast de audio", channel)
+		log.Printf("No hay clientes WebSocket en canal %s para broadcast de audio", channel)
 		return
 	}
 
-	log.Printf("Enviando audio en canal %s desde usuario %d a %d clientes", channel, senderID, len(clients)-1)
+	log.Printf("Broadcasting audio en canal %s desde usuario %d a %d clientes", channel, senderID, len(clients)-1)
 
 	for id, c := range clients {
 		if id == senderID {

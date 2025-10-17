@@ -22,9 +22,9 @@ services:
         condition: service_healthy
     entrypoint: [ "/bin/bash", "-c" ]
     command: >
-      "echo 'Descargando modelo qwen2.5:0.5b...';
-       OLLAMA_HOST=http://deepseek:11434 ollama pull qwen2.5:0.5b &&
-       echo 'Modelo qwen2.5:0.5b descargado exitosamente' || 
+      "echo 'Descargando modelo qwen2.5:1.5b...';
+       OLLAMA_HOST=http://deepseek:11434 ollama pull qwen2.5:1.5b &&
+       echo 'Modelo qwen2.5:1.5b descargado exitosamente' || 
        (echo 'Error descargando modelo' && exit 1)"
     environment:
       - OLLAMA_HOST=http://deepseek:11434
@@ -44,7 +44,7 @@ services:
     volumes:
       - hf-cache:/root/.cache/huggingface
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8000/health || curl -sf http://127.0.0.1:8000/ || exit 1"]
+      test: [ "CMD-SHELL", "curl -sf http://127.0.0.1:8000/health || curl -sf http://127.0.0.1:8000/ || exit 1" ]
       interval: 5s
       timeout: 3s
       retries: 30
