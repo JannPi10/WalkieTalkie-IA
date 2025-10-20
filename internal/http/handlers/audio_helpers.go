@@ -7,10 +7,10 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"walkie-backend/internal/config"
 
 	"walkie-backend/internal/models"
 	"walkie-backend/internal/services"
@@ -194,12 +194,19 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 // --------------------------- helpers ---------------------------
 
 func readUserIDHeader(r *http.Request) (uint, bool) {
-	if v := r.Header.Get("X-User-ID"); v != "" {
-		if n, err := strconv.ParseUint(v, 10, 64); err == nil && n > 0 {
-			return uint(n), true
-		}
+	// Validar X-Auth-Token (requerido para autenticación)
+	authToken := r.Header.Get("X-Auth-Token")
+	if authToken == "" {
+		return 0, false // Sin token, rechazar
 	}
-	return 0, false
+
+	// Buscar usuario por token
+	var user models.User
+	if err := config.DB.Where("auth_token = ?", authToken).First(&user).Error; err != nil {
+		return 0, false // Token inválido
+	}
+
+	return user.ID, true
 }
 
 func readAudioFromRequest(r *http.Request) ([]byte, error) {

@@ -15,6 +15,8 @@ type User struct {
 	IsActive         bool     `gorm:"default:true"`
 	LastActiveAt     time.Time
 	Memberships      []ChannelMembership `gorm:"foreignKey:UserID"`
+	PinHash          string   `gorm:"size:255"`
+	AuthToken        string   `gorm:"size:255;index"`
 }
 
 // IsInChannel verifica si el usuario está actualmente en un canal

@@ -5,7 +5,6 @@ import (
 	"fmt" // ← AGREGAR
 	"log"
 	"net/http"
-	"strconv" // ← AGREGAR
 	"strings"
 	"time"
 
@@ -25,7 +24,7 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	// 1. Leer User-ID
 	userID, ok := readUserIDHeader(r)
 	if !ok {
-		http.Error(w, "X-User-ID requerido", http.StatusBadRequest)
+		http.Error(w, "X-Auth-Token requerido", http.StatusBadRequest)
 		return
 	}
 
@@ -170,7 +169,8 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	handleAsConversation(w, user, audioData)
 }
 
-// GET /audio/poll?userId=X
+// GET /audio/poll
+// Headers: X-Auth-Token: <token>
 // Endpoint para que los clientes obtengan audio pendiente mediante polling
 func AudioPoll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -178,21 +178,15 @@ func AudioPoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Leer userId del query parameter
-	userIDStr := r.URL.Query().Get("userId")
-	if userIDStr == "" {
-		http.Error(w, "userId requerido", http.StatusBadRequest)
-		return
-	}
-
-	userID, err := strconv.ParseUint(userIDStr, 10, 64)
-	if err != nil || userID == 0 {
-		http.Error(w, "userId inválido", http.StatusBadRequest)
+	// Leer userId desde token
+	userID, ok := readUserIDHeader(r)
+	if !ok {
+		http.Error(w, "X-Auth-Token requerido", http.StatusUnauthorized)
 		return
 	}
 
 	// Verificar si hay audio pendiente
-	pendingAudio := DequeueAudio(uint(userID))
+	pendingAudio := DequeueAudio(userID)
 
 	if pendingAudio != nil {
 		// Devolver audio como WAV

@@ -42,6 +42,22 @@ COMANDOS VÁLIDOS (SOLO ESTOS):
    ✓ "salir" Y "canal"
    ✓ "desconectar" Y "canal"
 
+4. LISTAR USUARIOS - requiere:
+   ✓ "lista" Y "usuarios"
+   ✓ "tráeme" Y "usuarios"
+   ✓ "dame" Y "usuarios"
+   ✓ "cuáles" Y "usuarios"
+   ✓ "qué usuarios"
+   ✓ "usuarios disponibles"
+
+5. EN QUE CANAL ESTOY - requiere:
+   ✓ "en qué canal estoy"
+   ✓ "dime mi canal"
+   ✓ "cuál es mi canal"
+   ✓ "qué canal es"
+   ✓ "mi canal"
+   ✓ "mi canal actual"
+
 TODO LO DEMÁS ES CONVERSACIÓN, incluyendo:
 ✗ Saludos: "hola", "buenos días", "qué tal"
 ✗ Preguntas generales: "cómo estás", "qué haces", "cómo te va"
