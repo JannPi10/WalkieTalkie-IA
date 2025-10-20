@@ -12,5 +12,5 @@ func Routes(mux *http.ServeMux) {
 	mux.HandleFunc("/ws", handlers.HandleWebSocket)
 	mux.HandleFunc("/audio/ingest", handlers.AudioIngest)
 	mux.HandleFunc("/audio/poll", handlers.AudioPoll)
-	mux.HandleFunc("/auth", handlers.Authenticate) // ← AGREGAR
+	mux.HandleFunc("/auth", handlers.Authenticate)
 }

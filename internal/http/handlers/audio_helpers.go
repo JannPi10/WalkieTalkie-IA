@@ -17,7 +17,6 @@ import (
 	"walkie-backend/pkg/deepseek"
 )
 
-// AudioRelayResponse es la respuesta cuando el audio se envía a otros usuarios
 type AudioRelayResponse struct {
 	Status      string  `json:"status"`
 	Channel     string  `json:"channel"`
@@ -65,12 +64,10 @@ func handleChannelListCommand(userService *services.UserService) (string, error)
 
 	channelNames := make([]string, 0, len(channels))
 	for _, ch := range channels {
-		// Extraer solo el número del código (canal-1 -> 1)
 		channelNum := strings.TrimPrefix(ch.Code, "canal-")
 		channelNames = append(channelNames, channelNum)
 	}
 
-	// Unir con comas: "1, 2, 3, 4 y 5"
 	if len(channelNames) == 1 {
 		response.WriteString(channelNames[0])
 	} else if len(channelNames) == 2 {
@@ -171,7 +168,6 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 	pendingAudio := DequeueAudio(user.ID)
 
 	if pendingAudio != nil {
-		// Usuario tiene audio pendiente, devolverlo como WAV binario
 		log.Printf("Usuario %d recibe audio pendiente de usuario %d", user.ID, pendingAudio.SenderID)
 
 		w.Header().Set("Content-Type", "audio/wav")
@@ -194,16 +190,15 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 // --------------------------- helpers ---------------------------
 
 func readUserIDHeader(r *http.Request) (uint, bool) {
-	// Validar X-Auth-Token (requerido para autenticación)
 	authToken := r.Header.Get("X-Auth-Token")
 	if authToken == "" {
-		return 0, false // Sin token, rechazar
+		return 0, false
 	}
 
 	// Buscar usuario por token
 	var user models.User
 	if err := config.DB.Where("auth_token = ?", authToken).First(&user).Error; err != nil {
-		return 0, false // Token inválido
+		return 0, false
 	}
 
 	return user.ID, true
@@ -239,7 +234,6 @@ func isValidWAVFormat(data []byte) bool {
 }
 
 func isLikelyCoherent(s string) bool {
-	// Heurística mejorada para detectar habla coherente
 	s = strings.TrimSpace(s)
 
 	// Aceptar frases muy cortas comunes
@@ -284,7 +278,6 @@ func isLikelyCoherent(s string) bool {
 }
 
 func estimateAudioDuration(audioData []byte) time.Duration {
-	// Estimación para WAV 16kHz, 16-bit, mono
 	dataSize := len(audioData)
 
 	// Verificar y quitar header WAV
@@ -297,10 +290,10 @@ func estimateAudioDuration(audioData []byte) time.Duration {
 
 	// Límites de seguridad
 	if seconds < 0.5 {
-		seconds = 0.5 // Mínimo 500ms
+		seconds = 0.5
 	}
 	if seconds > 30 {
-		seconds = 30 // Máximo 30s
+		seconds = 30
 	}
 
 	return time.Duration(seconds * float64(time.Second))

@@ -41,7 +41,6 @@ func ConnectDB() {
 }
 
 func seedDatabase(db *gorm.DB) {
-	// Seed canales (5 canales como especificado)
 	channels := []models.Channel{
 		{Code: "canal-1", Name: "Canal 1", MaxUsers: 100, IsPrivate: false},
 		{Code: "canal-2", Name: "Canal 2", MaxUsers: 100, IsPrivate: false},
@@ -62,7 +61,6 @@ func seedDatabase(db *gorm.DB) {
 		}
 	}
 
-	// Seed usuarios (10 usuarios como especificado)
 	for i := 1; i <= 10; i++ {
 		displayName := fmt.Sprintf("usuario-%02d", i)
 		email := fmt.Sprintf("%s@example.com", displayName)

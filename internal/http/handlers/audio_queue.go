@@ -21,7 +21,7 @@ type PendingAudio struct {
 // AudioQueue maneja la cola de audios pendientes por usuario
 type AudioQueue struct {
 	mu     sync.RWMutex
-	queues map[uint][]*PendingAudio // userID -> lista de audios pendientes
+	queues map[uint][]*PendingAudio
 }
 
 var globalAudioQueue = &AudioQueue{
@@ -46,7 +46,7 @@ func EnqueueAudio(senderID uint, channel string, audioData []byte, duration floa
 	// Agregar audio a la cola de cada recipient
 	for _, recipientID := range recipients {
 		if recipientID == senderID {
-			continue // No agregar al sender
+			continue
 		}
 
 		if globalAudioQueue.queues[recipientID] == nil {

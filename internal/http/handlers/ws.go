@@ -314,7 +314,7 @@ func stopTransmission(channel string, speakerID uint) {
 		"type":   "transmission",
 		"from":   speakerID,
 		"action": "stop",
-		"signal": "START", // Todos pueden hablar de nuevo
+		"signal": "START",
 	}
 
 	msgBytes, _ := json.Marshal(message)
@@ -331,7 +331,6 @@ func stopTransmission(channel string, speakerID uint) {
 }
 
 func broadcastAudio(channel string, senderID uint, audio []byte) {
-	// Validar tamaño del audio
 	if len(audio) > maxAudioSize {
 		log.Printf("Audio demasiado grande: %d bytes (max: %d)", len(audio), maxAudioSize)
 		return
@@ -350,7 +349,7 @@ func broadcastAudio(channel string, senderID uint, audio []byte) {
 
 	for id, c := range clients {
 		if id == senderID {
-			continue // No enviar audio al remitente
+			continue
 		}
 
 		c.mu.Lock()

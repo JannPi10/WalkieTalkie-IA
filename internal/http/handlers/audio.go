@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"fmt" // ← AGREGAR
+	"fmt"
 	"log"
 	"net/http"
 	"strings"
@@ -69,7 +69,6 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	text, err := sttClient.TranscribeAudio(ctx, audioData)
 	if err != nil {
 		log.Printf("Error en STT para usuario %d: %v", userID, err)
-		// Si falla STT y está en canal, enviar como conversación sin análisis
 		if user.IsInChannel() {
 			log.Printf("Enviando audio sin transcripción para usuario %d (en canal)", userID)
 			handleAsConversation(w, user, audioData)
@@ -114,7 +113,6 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	channels, err := userService.GetAvailableChannels()
 	if err != nil {
 		log.Printf("Error obteniendo canales para usuario %d: %v", userID, err)
-		// Fallback: si está en canal, enviar como conversación
 		if user.IsInChannel() {
 			handleAsConversation(w, user, audioData)
 		} else {
@@ -132,7 +130,6 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	result, err := dsClient.AnalyzeTranscript(ctx, text, chanCodes, currentState, "")
 	if err != nil {
 		log.Printf("Error analizando transcripción para usuario %d: %v", userID, err)
-		// Fallback inteligente: si está en canal, tratar como conversación
 		if user.IsInChannel() {
 			log.Printf("Fallback: tratando como conversación para usuario %d", userID)
 			handleAsConversation(w, user, audioData)

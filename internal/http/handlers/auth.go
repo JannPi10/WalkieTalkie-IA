@@ -17,7 +17,7 @@ import (
 )
 
 // AuthenticationRequest is the expected request body from mobile
-// {"nombre":"...","pin":1234}  // pin ahora es int
+// {"nombre":"...","pin":1234}  // pin int
 type AuthenticationRequest struct {
 	Nombre string `json:"nombre"`
 	Pin    int    `json:"pin"`
@@ -50,10 +50,8 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find or create user by DisplayName
 	var user models.User
 	if err := config.DB.Where("display_name = ?", req.Nombre).First(&user).Error; err != nil {
-		// Create new user
 		email := fmt.Sprintf("%s@local", slugify(req.Nombre))
 		pinHash, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%d", req.Pin)), bcrypt.DefaultCost)
 		user = models.User{
@@ -68,7 +66,6 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// User exists: validate pin (if previously set)
 		if user.PinHash != "" {
 			if err := bcrypt.CompareHashAndPassword([]byte(user.PinHash), []byte(fmt.Sprintf("%d", req.Pin))); err != nil {
 				w.Header().Set("Content-Type", "application/json")
@@ -77,7 +74,6 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			// First-time set pin
 			pinHash, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%d", req.Pin)), bcrypt.DefaultCost)
 			user.PinHash = string(pinHash)
 		}
@@ -86,7 +82,6 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 		_ = config.DB.Save(&user).Error
 	}
 
-	// Generate and store auth token
 	token, err := generateToken(32)
 	if err != nil {
 		http.Error(w, `{"message":"no se pudo generar token"}`, http.StatusInternalServerError)
@@ -99,11 +94,10 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Respond JSON
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(AuthenticationResponse{
-		Message: "usuario registrado exitosamente",
+		Message: "usuario ingresado exitosamente",
 		Token:   token,
 	})
 }
