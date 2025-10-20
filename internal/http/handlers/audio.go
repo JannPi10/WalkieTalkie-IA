@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"fmt" // ← AGREGAR
 	"log"
 	"net/http"
+	"strconv" // ← AGREGAR
 	"strings"
 	"time"
 
@@ -28,7 +30,7 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Crear contexto con timeout
-	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
 	defer cancel()
 
 	// 3. Leer audio del request
@@ -166,4 +168,47 @@ func AudioIngest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	handleAsConversation(w, user, audioData)
+}
+
+// GET /audio/poll?userId=X
+// Endpoint para que los clientes obtengan audio pendiente mediante polling
+func AudioPoll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Leer userId del query parameter
+	userIDStr := r.URL.Query().Get("userId")
+	if userIDStr == "" {
+		http.Error(w, "userId requerido", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := strconv.ParseUint(userIDStr, 10, 64)
+	if err != nil || userID == 0 {
+		http.Error(w, "userId inválido", http.StatusBadRequest)
+		return
+	}
+
+	// Verificar si hay audio pendiente
+	pendingAudio := DequeueAudio(uint(userID))
+
+	if pendingAudio != nil {
+		// Devolver audio como WAV
+		log.Printf("Usuario %d recibe audio pendiente de usuario %d via polling", userID, pendingAudio.SenderID)
+
+		w.Header().Set("Content-Type", "audio/wav")
+		w.Header().Set("X-Audio-From", fmt.Sprintf("%d", pendingAudio.SenderID))
+		w.Header().Set("X-Channel", pendingAudio.Channel)
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write(pendingAudio.AudioData)
+		if err != nil {
+			log.Printf("Error enviando audio a usuario %d: %v", userID, err)
+		}
+		return
+	}
+
+	// No hay audio pendiente
+	w.WriteHeader(http.StatusNoContent)
 }

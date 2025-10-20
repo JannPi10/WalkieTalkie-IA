@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -124,7 +123,6 @@ func handleChannelDisconnectCommand(user *models.User, userService *services.Use
 }
 
 // handleAsConversation maneja el audio como conversación
-// MODIFICADO: Ahora devuelve JSON con el audio para que Android lo reproduzca
 func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []byte) {
 	channelCode := user.GetCurrentChannelCode()
 	if channelCode == "" {
@@ -132,12 +130,12 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 		return
 	}
 
-	log.Printf("Enviando audio de usuario %d a canal %s", user.ID, channelCode)
+	log.Printf("Procesando audio de usuario %d en canal %s", user.ID, channelCode)
 
-	// 1. Enviar señales STOP/START via WebSocket a usuarios conectados
+	// 1. Enviar señales STOP/START via WebSocket (si hay)
 	startTransmission(channelCode, user.ID)
 
-	// 2. Enviar audio via WebSocket a usuarios conectados (en tiempo real)
+	// 2. Enviar audio via WebSocket (si hay)
 	broadcastAudio(channelCode, user.ID, audioData)
 
 	// 3. Estimar duración del audio
@@ -149,40 +147,48 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 		stopTransmission(channelCode, user.ID)
 	}()
 
-	// 5. Obtener lista de usuarios en el canal (EXCLUIR al sender)
-	channelUsers := GetChannelUsers(channelCode)
-	capacity := len(channelUsers)
-	if capacity > 0 {
-		capacity-- // Restar 1 solo si hay usuarios
-	}
-	recipients := make([]uint, 0, capacity)
-	for _, uid := range channelUsers {
-		if uid != user.ID { // Excluir al sender
-			recipients = append(recipients, uid)
-		}
-	}
-
-	// 6. Preparar respuesta JSON SIN el audio (el sender no lo necesita)
-	response := AudioRelayResponse{
-		Status:      "relayed",
-		Channel:     channelCode,
-		Recipients:  recipients,
-		AudioBase64: "",
-		Duration:    duration.Seconds(),
-		SampleRate:  16000,
-		Format:      "wav",
-	}
-
-	// 7. Enviar respuesta JSON al cliente que envió el audio
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("Error codificando respuesta JSON: %v", err)
-		http.Error(w, "Error interno", http.StatusInternalServerError)
+	// 5. Obtener usuarios del canal desde BASE DE DATOS
+	userService := services.NewUserService()
+	channelUsers, err := userService.GetChannelActiveUsers(channelCode)
+	if err != nil {
+		log.Printf("Error obteniendo usuarios del canal %s: %v", channelCode, err)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	log.Printf("Audio enviado exitosamente: usuario=%d, canal=%s, destinatarios=%d, duración=%.2fs",
-		user.ID, channelCode, len(channelUsers), duration.Seconds())
+	// Crear lista de recipients (excluir al sender)
+	recipients := make([]uint, 0, len(channelUsers))
+	for _, u := range channelUsers {
+		if u.ID != user.ID {
+			recipients = append(recipients, u.ID)
+		}
+	}
+
+	// 6. GUARDAR audio en cola para otros usuarios
+	EnqueueAudio(user.ID, channelCode, audioData, duration.Seconds(), recipients)
+
+	// 7. VERIFICAR si este usuario tiene audio pendiente
+	pendingAudio := DequeueAudio(user.ID)
+
+	if pendingAudio != nil {
+		// Usuario tiene audio pendiente, devolverlo como WAV binario
+		log.Printf("Usuario %d recibe audio pendiente de usuario %d", user.ID, pendingAudio.SenderID)
+
+		w.Header().Set("Content-Type", "audio/wav")
+		w.Header().Set("X-Audio-From", fmt.Sprintf("%d", pendingAudio.SenderID))
+		w.Header().Set("X-Channel", pendingAudio.Channel)
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write(pendingAudio.AudioData)
+		if err != nil {
+			log.Printf("Error enviando audio a usuario %d: %v", user.ID, err)
+		}
+		return
+	}
+
+	// 8. No hay audio pendiente, responder 204 No Content
+	log.Printf("Audio procesado: usuario=%d, canal=%s, destinatarios=%d, sin_audio_pendiente",
+		user.ID, channelCode, len(recipients))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --------------------------- helpers ---------------------------
