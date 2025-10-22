@@ -63,14 +63,12 @@ func seedDatabase(db *gorm.DB) {
 
 	for i := 1; i <= 10; i++ {
 		displayName := fmt.Sprintf("usuario-%02d", i)
-		email := fmt.Sprintf("%s@example.com", displayName)
 
 		var count int64
 		db.Model(&models.User{}).Where("display_name = ?", displayName).Count(&count)
 		if count == 0 {
 			user := models.User{
 				DisplayName:  displayName,
-				Email:        email,
 				IsActive:     true,
 				LastActiveAt: time.Now(),
 			}

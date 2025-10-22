@@ -52,11 +52,9 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 
 	var user models.User
 	if err := config.DB.Where("display_name = ?", req.Nombre).First(&user).Error; err != nil {
-		email := fmt.Sprintf("%s@local", slugify(req.Nombre))
 		pinHash, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%d", req.Pin)), bcrypt.DefaultCost)
 		user = models.User{
 			DisplayName:  req.Nombre,
-			Email:        email,
 			IsActive:     true,
 			LastActiveAt: time.Now(),
 			PinHash:      string(pinHash),

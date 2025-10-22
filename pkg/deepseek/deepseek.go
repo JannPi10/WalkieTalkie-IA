@@ -259,12 +259,12 @@ func extractJSONFromResponse(content string) string {
 		inCodeBlock := false
 
 		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "```") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "```") {
 				inCodeBlock = !inCodeBlock
 				continue
 			}
-			if inCodeBlock && line != "" {
+			if inCodeBlock && trimmed != "" {
 				jsonLines = append(jsonLines, line)
 			}
 		}
@@ -312,9 +312,4 @@ func buildAnalysisPrompt(transcript string, channels []string, currentState stri
 
 	sb.WriteString("\nRecuerda: Solo marca como comando si contiene palabras clave EXACTAS. En caso de duda, marca como conversación.")
 	return sb.String()
-}
-
-func strconvJSONString(v string) string {
-	b, _ := json.Marshal(v)
-	return string(b)
 }

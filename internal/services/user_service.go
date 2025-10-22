@@ -20,7 +20,6 @@ func NewUserService() *UserService {
 
 // ConnectUserToChannel conecta un usuario a un canal específico
 func (s *UserService) ConnectUserToChannel(userID uint, channelCode string) error {
-	// Buscar el canal
 	var channel models.Channel
 	if err := s.db.Where("code = ?", channelCode).First(&channel).Error; err != nil {
 		return fmt.Errorf("canal no encontrado: %s", channelCode)

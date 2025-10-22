@@ -1,0 +1,260 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>server: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">walkie-backend/cmd/server/main.go (0.0%)</option>
+				
+				<option value="file1">walkie-backend/internal/config/db.go (0.0%)</option>
+				
+				<option value="file2">walkie-backend/internal/http/router.go (0.0%)</option>
+				
+				<option value="file3">walkie-backend/internal/response/json.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">package main
+
+import (
+        "log"
+        "net/http"
+        "os"
+
+        "walkie-backend/internal/config"
+        httproutes "walkie-backend/internal/http"
+
+        "github.com/joho/godotenv"
+)
+
+func main() <span class="cov0" title="0">{
+        _ = godotenv.Load(".env")
+        config.ConnectDB()
+
+        mux := http.NewServeMux()
+        httproutes.Routes(mux)
+
+        addr := ":8080"
+        if v := os.Getenv("PORT"); v != "" </span><span class="cov0" title="0">{
+                addr = ":" + v
+        }</span>
+        <span class="cov0" title="0">log.Println("Server running at http://localhost" + addr)
+        log.Fatal(http.ListenAndServe(addr, mux))</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package config
+
+import (
+        "fmt"
+        "log"
+        "os"
+        "sync"
+        "time"
+
+        "walkie-backend/internal/models"
+
+        "gorm.io/driver/postgres"
+        "gorm.io/gorm"
+)
+
+var (
+        DB   *gorm.DB
+        once sync.Once
+)
+
+func ConnectDB() <span class="cov0" title="0">{
+        once.Do(func() </span><span class="cov0" title="0">{
+                dsn := os.Getenv("DATABASE_URL")
+                db, err := gorm.Open(postgres.Open(dsn), &amp;gorm.Config{})
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Fatal("Error connecting PostgreSQL:", err)
+                }</span>
+
+                <span class="cov0" title="0">if err := db.AutoMigrate(
+                        &amp;models.User{},
+                        &amp;models.Channel{},
+                        &amp;models.ChannelMembership{},
+                ); err != nil </span><span class="cov0" title="0">{
+                        log.Fatal("Error running migrations:", err)
+                }</span>
+
+                <span class="cov0" title="0">seedDatabase(db)
+                DB = db
+                log.Println("DB connected, migrated and seeded")</span>
+        })
+}
+
+func seedDatabase(db *gorm.DB) <span class="cov0" title="0">{
+        channels := []models.Channel{
+                {Code: "canal-1", Name: "Canal 1", MaxUsers: 100, IsPrivate: false},
+                {Code: "canal-2", Name: "Canal 2", MaxUsers: 100, IsPrivate: false},
+                {Code: "canal-3", Name: "Canal 3", MaxUsers: 100, IsPrivate: false},
+                {Code: "canal-4", Name: "Canal 4", MaxUsers: 100, IsPrivate: false},
+                {Code: "canal-5", Name: "Canal 5", MaxUsers: 100, IsPrivate: false},
+        }
+
+        for _, ch := range channels </span><span class="cov0" title="0">{
+                var count int64
+                db.Model(&amp;models.Channel{}).Where("code = ?", ch.Code).Count(&amp;count)
+                if count == 0 </span><span class="cov0" title="0">{
+                        if err := db.Create(&amp;ch).Error; err != nil </span><span class="cov0" title="0">{
+                                log.Printf("Error seeding channel %s: %v", ch.Code, err)
+                        }</span> else<span class="cov0" title="0"> {
+                                log.Printf("Canal creado: %s", ch.Code)
+                        }</span>
+                }
+        }
+
+        <span class="cov0" title="0">for i := 1; i &lt;= 10; i++ </span><span class="cov0" title="0">{
+                displayName := fmt.Sprintf("usuario-%02d", i)
+                email := fmt.Sprintf("%s@example.com", displayName)
+
+                var count int64
+                db.Model(&amp;models.User{}).Where("display_name = ?", displayName).Count(&amp;count)
+                if count == 0 </span><span class="cov0" title="0">{
+                        user := models.User{
+                                DisplayName:  displayName,
+                                Email:        email,
+                                IsActive:     true,
+                                LastActiveAt: time.Now(),
+                        }
+                        if err := db.Create(&amp;user).Error; err != nil </span><span class="cov0" title="0">{
+                                log.Printf("Error seeding user %s: %v", displayName, err)
+                        }</span> else<span class="cov0" title="0"> {
+                                log.Printf("Usuario creado: %s (ID: %d)", displayName, user.ID)
+                        }</span>
+                }
+        }
+
+        <span class="cov0" title="0">log.Println("Database seeding completed")</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package http
+
+import (
+        "net/http"
+
+        "walkie-backend/internal/http/handlers"
+)
+
+func Routes(mux *http.ServeMux) <span class="cov0" title="0">{
+        mux.HandleFunc("/channels/public", handlers.ListPublicChannels)
+        mux.HandleFunc("/channel-users", handlers.ChannelUsers)
+        mux.HandleFunc("/ws", handlers.HandleWebSocket)
+        mux.HandleFunc("/audio/ingest", handlers.AudioIngest)
+        mux.HandleFunc("/audio/poll", handlers.AudioPoll)
+        mux.HandleFunc("/auth", handlers.Authenticate)
+}</span>
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package response
+
+import (
+        "encoding/json"
+        "net/http"
+)
+
+func WriteJSON(w http.ResponseWriter, status int, data any) <span class="cov0" title="0">{
+        w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(status)
+        _ = json.NewEncoder(w).Encode(data)
+}</span>
+
+func WriteErr(w http.ResponseWriter, status int, message string) <span class="cov0" title="0">{
+        WriteJSON(w, status, map[string]string{"error": message})
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>

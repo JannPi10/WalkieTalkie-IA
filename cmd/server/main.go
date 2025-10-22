@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"walkie-backend/internal/config"
 	httproutes "walkie-backend/internal/http"
@@ -13,15 +14,33 @@ import (
 
 func main() {
 	_ = godotenv.Load(".env")
-	config.ConnectDB()
+
+	addr, handler := buildServer(os.Getenv, config.ConnectDB, httproutes.Routes)
+	log.Println("Server running at http://localhost" + addr)
+	log.Fatal(http.ListenAndServe(addr, handler))
+}
+
+func buildServer(
+	getEnv func(string) string,
+	connectDB func(),
+	registerRoutes func(*http.ServeMux),
+) (string, http.Handler) {
+	if connectDB != nil {
+		connectDB()
+	}
 
 	mux := http.NewServeMux()
-	httproutes.Routes(mux)
-
-	addr := ":8080"
-	if v := os.Getenv("PORT"); v != "" {
-		addr = ":" + v
+	if registerRoutes != nil {
+		registerRoutes(mux)
 	}
-	log.Println("Server running at http://localhost" + addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+
+	return serverAddress(getEnv), mux
+}
+
+func serverAddress(getEnv func(string) string) string {
+	port := strings.TrimSpace(getEnv("PORT"))
+	if port == "" {
+		port = "8080"
+	}
+	return ":" + port
 }

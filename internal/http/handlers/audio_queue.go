@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/base64"
 	"log"
 	"sync"
 	"time"
@@ -57,7 +56,6 @@ func EnqueueAudio(senderID uint, channel string, audioData []byte, duration floa
 		log.Printf("Audio encolado para usuario %d (de usuario %d, canal %s)", recipientID, senderID, channel)
 	}
 
-	// Limpiar audios antiguos (más de 5 minutos)
 	go cleanOldAudios()
 }
 
@@ -77,14 +75,6 @@ func DequeueAudio(userID uint) *PendingAudio {
 
 	log.Printf("Audio desencolado para usuario %d (de usuario %d, canal %s)", userID, audio.SenderID, audio.Channel)
 	return audio
-}
-
-// GetPendingAudioCount obtiene la cantidad de audios pendientes para un usuario
-func GetPendingAudioCount(userID uint) int {
-	globalAudioQueue.mu.RLock()
-	defer globalAudioQueue.mu.RUnlock()
-
-	return len(globalAudioQueue.queues[userID])
 }
 
 // cleanOldAudios elimina audios más antiguos de 5 minutos
@@ -107,18 +97,5 @@ func cleanOldAudios() {
 		if len(filtered) == 0 {
 			delete(globalAudioQueue.queues, userID)
 		}
-	}
-}
-
-// ConvertToAudioRelayResponse convierte un PendingAudio a AudioRelayResponse
-func ConvertToAudioRelayResponse(audio *PendingAudio) AudioRelayResponse {
-	return AudioRelayResponse{
-		Status:      "received",
-		Channel:     audio.Channel,
-		Recipients:  []uint{},
-		AudioBase64: base64.StdEncoding.EncodeToString(audio.AudioData),
-		Duration:    audio.Duration,
-		SampleRate:  audio.SampleRate,
-		Format:      audio.Format,
 	}
 }

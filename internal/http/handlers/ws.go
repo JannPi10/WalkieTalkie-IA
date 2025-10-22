@@ -241,24 +241,36 @@ func moveClientToChannel(userID uint, newChannel string) {
 		}
 	}
 
+	// Desconectar si no hay nuevo canal
+	if newChannel == "" {
+		delete(registry.byUser, userID)
+		client.channel = ""
+		log.Printf("Cliente desconectado: usuario=%d", userID)
+		return
+	}
+
 	// Agregar al nuevo canal
 	client.channel = newChannel
-	if newChannel != "" {
-		if registry.byChannel[newChannel] == nil {
-			registry.byChannel[newChannel] = make(map[uint]*wsClient)
-		}
-		registry.byChannel[newChannel][userID] = client
+	if registry.byChannel[newChannel] == nil {
+		registry.byChannel[newChannel] = make(map[uint]*wsClient)
 	}
+	registry.byChannel[newChannel][userID] = client
 
 	log.Printf("Cliente movido: usuario=%d, nuevo_canal=%s", userID, newChannel)
 
 	// Notificar al cliente del cambio
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	_ = client.conn.WriteJSON(map[string]string{
-		"type":    "channel_changed",
-		"channel": newChannel,
-	})
+	if client.conn != nil {
+		client.mu.Lock()
+		err := client.conn.WriteJSON(map[string]string{
+			"type":    "channel_changed",
+			"channel": newChannel,
+		})
+		client.mu.Unlock()
+
+		if err != nil {
+			log.Printf("Error notificando al usuario %d del cambio de canal: %v", userID, err)
+		}
+	}
 }
 
 func startTransmission(channel string, speakerID uint) {
@@ -280,20 +292,28 @@ func startTransmission(channel string, speakerID uint) {
 	}
 
 	for id, c := range clients {
-		// STOP para todos excepto el que habla
 		if id == speakerID {
-			message["signal"] = "START" // El que habla puede seguir
+			message["signal"] = "START"
 		} else {
-			message["signal"] = "STOP" // Los demás deben callar
+			message["signal"] = "STOP"
 		}
 
 		msgBytes, _ := json.Marshal(message)
-		c.mu.Lock()
-		err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
-		c.mu.Unlock()
+		if c.conn != nil {
+			c.mu.Lock()
+			err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
+			c.mu.Unlock()
+			if err != nil {
+				log.Printf("Error enviando señal START a usuario %d: %v", id, err)
+			}
+			continue
+		}
 
-		if err != nil {
-			log.Printf("Error enviando señal START a usuario %d: %v", id, err)
+		if c.send != nil {
+			select {
+			case c.send <- msgBytes:
+			default:
+			}
 		}
 	}
 }
@@ -314,18 +334,27 @@ func stopTransmission(channel string, speakerID uint) {
 		"type":   "transmission",
 		"from":   speakerID,
 		"action": "stop",
-		"signal": "START",
+		"signal": "STOP",
 	}
 
 	msgBytes, _ := json.Marshal(message)
 
 	for id, c := range clients {
-		c.mu.Lock()
-		err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
-		c.mu.Unlock()
+		if c.conn != nil {
+			c.mu.Lock()
+			err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
+			c.mu.Unlock()
+			if err != nil {
+				log.Printf("Error enviando señal STOP a usuario %d: %v", id, err)
+			}
+			continue
+		}
 
-		if err != nil {
-			log.Printf("Error enviando señal STOP a usuario %d: %v", id, err)
+		if c.send != nil {
+			select {
+			case c.send <- msgBytes:
+			default:
+			}
 		}
 	}
 }
@@ -345,32 +374,24 @@ func broadcastAudio(channel string, senderID uint, audio []byte) {
 		return
 	}
 
-	log.Printf("Broadcasting audio en canal %s desde usuario %d a %d clientes", channel, senderID, len(clients)-1)
+	log.Printf("Broadcasting audio en canal %s desde usuario %d a %d clientes", channel, senderID, len(clients))
 
 	for id, c := range clients {
-		if id == senderID {
+		if c.conn != nil {
+			c.mu.Lock()
+			err := c.conn.WriteMessage(websocket.BinaryMessage, audio)
+			c.mu.Unlock()
+			if err != nil {
+				log.Printf("Error enviando audio a usuario %d en canal %s: %v", id, channel, err)
+			}
 			continue
 		}
 
-		c.mu.Lock()
-		err := c.conn.WriteMessage(websocket.BinaryMessage, audio)
-		c.mu.Unlock()
-
-		if err != nil {
-			log.Printf("Error enviando audio a usuario %d en canal %s: %v", id, channel, err)
+		if c.send != nil {
+			select {
+			case c.send <- audio:
+			default:
+			}
 		}
 	}
-}
-
-// GetChannelUsers obtiene los usuarios conectados via WebSocket en un canal
-func GetChannelUsers(channel string) []uint {
-	registry.RLock()
-	defer registry.RUnlock()
-
-	clients := registry.byChannel[channel]
-	users := make([]uint, 0, len(clients))
-	for userID := range clients {
-		users = append(users, userID)
-	}
-	return users
 }

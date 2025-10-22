@@ -9,14 +9,13 @@ import (
 type User struct {
 	gorm.Model
 	DisplayName      string   `gorm:"uniqueIndex;not null"`
-	Email            string   `gorm:"uniqueIndex;not null"`
 	CurrentChannelID *uint    `gorm:"index"`
 	CurrentChannel   *Channel `gorm:"foreignKey:CurrentChannelID"`
 	IsActive         bool     `gorm:"default:true"`
 	LastActiveAt     time.Time
 	Memberships      []ChannelMembership `gorm:"foreignKey:UserID"`
-	PinHash          string   `gorm:"size:255"`
-	AuthToken        string   `gorm:"size:255;index"`
+	PinHash          string              `gorm:"size:255"`
+	AuthToken        string              `gorm:"size:255;index"`
 }
 
 // IsInChannel verifica si el usuario está actualmente en un canal

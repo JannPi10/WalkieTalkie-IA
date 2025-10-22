@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"log"
 	"sync"
 
 	"walkie-backend/pkg/deepseek"
@@ -30,10 +29,4 @@ func EnsureSTTClient() (*stt.Client, error) {
 		sClient, sErr = stt.NewClient()
 	})
 	return sClient, sErr
-}
-
-func logWarn(prefix string, err error) {
-	if err != nil {
-		log.Printf("%s: %v", prefix, err)
-	}
 }
