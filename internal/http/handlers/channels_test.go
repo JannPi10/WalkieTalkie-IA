@@ -103,7 +103,6 @@ func TestListPublicChannels_DBError(t *testing.T) {
 	oldDB := config.DB
 	defer func() { config.DB = oldDB }()
 
-	// Set DB to a new instance without migrations to simulate error
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("failed to open test db: %v", err)

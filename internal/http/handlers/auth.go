@@ -16,7 +16,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// AuthenticationRequest is the expected request body from mobile
 // {"nombre":"...","pin":1234}  // pin int
 type AuthenticationRequest struct {
 	Nombre string `json:"nombre"`

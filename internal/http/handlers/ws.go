@@ -71,7 +71,6 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		conn.Close()
 	}()
 
-	// Leer handshake
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
 		log.Printf("ws handshake read: %v", err)

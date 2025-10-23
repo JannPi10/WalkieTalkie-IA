@@ -1,4 +1,4 @@
 .env
-.env.prod
+.env.example
 .idea
 .DS_Store

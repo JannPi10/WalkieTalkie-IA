@@ -1,8 +1,3 @@
-# Dependencias adicionales para tests
-# Agregar estas líneas a tu go.mod si no están incluidas:
 
-# Para mocks de base de datos
 github.com/DATA-DOG/go-sqlmock v1.5.2
-
-# Para testing HTTP (ya incluido en stdlib)
 # net/http/httptest

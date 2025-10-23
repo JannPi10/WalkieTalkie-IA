@@ -80,13 +80,11 @@ func TestSeedDatabase_IsIdempotent(t *testing.T) {
 }
 
 func TestConnectAndMigrate(t *testing.T) {
-	// Use in-memory SQLite for testing
 	db, err := connectAndMigrate(":memory:")
 	if err != nil {
 		t.Fatalf("connectAndMigrate failed: %v", err)
 	}
 
-	// Verify migrations
 	if !db.Migrator().HasTable(&models.User{}) {
 		t.Error("User table not created")
 	}
@@ -97,7 +95,6 @@ func TestConnectAndMigrate(t *testing.T) {
 		t.Error("ChannelMembership table not created")
 	}
 
-	// Verify seeding
 	var channelCount int64
 	if err := db.Model(&models.Channel{}).Count(&channelCount).Error; err != nil {
 		t.Fatalf("count channels: %v", err)
@@ -118,7 +115,7 @@ func TestConnectAndMigrate(t *testing.T) {
 func TestConnectDB(t *testing.T) {
 	resetOnce(&once)
 	oldDB := DB
-	defer func() { DB = oldDB }() // Restore after test
+	defer func() { DB = oldDB }()
 
 	t.Setenv("DATABASE_URL", ":memory:")
 	ConnectDB()
@@ -127,7 +124,6 @@ func TestConnectDB(t *testing.T) {
 		t.Fatal("DB should be assigned")
 	}
 
-	// Verify migrations
 	if !DB.Migrator().HasTable(&models.User{}) {
 		t.Error("User table not created")
 	}
@@ -138,7 +134,6 @@ func TestConnectDB(t *testing.T) {
 		t.Error("ChannelMembership table not created")
 	}
 
-	// Verify seeding
 	var channelCount int64
 	if err := DB.Model(&models.Channel{}).Count(&channelCount).Error; err != nil {
 		t.Fatalf("count channels: %v", err)

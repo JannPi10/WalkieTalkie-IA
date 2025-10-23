@@ -2,23 +2,23 @@
 set -euo pipefail
 
 echo "Verificando disponibilidad de modelos..."
-echo "Verificando modelo qwen2.5:1.5b..."              # ← CAMBIAR
+echo "Verificando modelo qwen2.5:1.5b..."
 max_attempts=30
 attempt=0
 
 while [ $attempt -lt $max_attempts ]; do
-    if curl -sf http://deepseek:11434/api/tags | grep -q "qwen2.5:1.5b"; then    # ← CAMBIAR
-        echo "Modelo qwen2.5:1.5b disponible"          # ← CAMBIAR
+    if curl -sf http://deepseek:11434/api/tags | grep -q "qwen2.5:1.5b"; then
+        echo "Modelo qwen2.5:1.5b disponible"
         break
     fi
 
     attempt=$((attempt + 1))
-    echo "Intento $attempt/$max_attempts - Esperando modelo qwen2.5:1.5b..."     # ← CAMBIAR
+    echo "Intento $attempt/$max_attempts - Esperando modelo qwen2.5:1.5b..."
     sleep 10
 done
 
 if [ $attempt -eq $max_attempts ]; then
-    echo "Error: Modelo qwen2.5:1.5b no disponible después de $max_attempts intentos"    # ← CAMBIAR
+    echo "Error: Modelo qwen2.5:1.5b no disponible después de $max_attempts intentos"
     exit 1
 fi
 
