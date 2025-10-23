@@ -53,3 +53,27 @@ func TestBuildServer_CustomPort(t *testing.T) {
 		t.Fatal("expected handler")
 	}
 }
+
+func TestRun(t *testing.T) {
+	t.Run("run with mock listen", func(t *testing.T) {
+		var calledAddr string
+		var calledHandler http.Handler
+		mockListen := func(addr string, handler http.Handler) error {
+			calledAddr = addr
+			calledHandler = handler
+			return nil
+		}
+
+		err := run(mockListen, func() {})
+		if err != nil {
+			t.Fatalf("run returned error: %v", err)
+		}
+
+		if calledAddr == "" {
+			t.Error("expected listen to be called with addr")
+		}
+		if calledHandler == nil {
+			t.Error("expected listen to be called with handler")
+		}
+	})
+}

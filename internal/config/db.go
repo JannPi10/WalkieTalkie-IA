@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"walkie-backend/internal/models"
 
 	"gorm.io/driver/postgres"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
 
@@ -20,24 +22,38 @@ var (
 
 func ConnectDB() {
 	once.Do(func() {
-		dsn := os.Getenv("DATABASE_URL")
-		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		db, err := connectAndMigrate(os.Getenv("DATABASE_URL"))
 		if err != nil {
 			log.Fatal("Error connecting PostgreSQL:", err)
 		}
-
-		if err := db.AutoMigrate(
-			&models.User{},
-			&models.Channel{},
-			&models.ChannelMembership{},
-		); err != nil {
-			log.Fatal("Error running migrations:", err)
-		}
-
-		seedDatabase(db)
 		DB = db
 		log.Println("DB connected, migrated and seeded")
 	})
+}
+
+func connectAndMigrate(dsn string) (*gorm.DB, error) {
+	var dialector gorm.Dialector
+	if dsn == ":memory:" || strings.HasPrefix(dsn, "file::") {
+		dialector = sqlite.Open(dsn)
+	} else {
+		dialector = postgres.Open(dsn)
+	}
+
+	db, err := gorm.Open(dialector, &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.AutoMigrate(
+		&models.User{},
+		&models.Channel{},
+		&models.ChannelMembership{},
+	); err != nil {
+		return nil, err
+	}
+
+	seedDatabase(db)
+	return db, nil
 }
 
 func seedDatabase(db *gorm.DB) {

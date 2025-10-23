@@ -756,3 +756,44 @@ func TestAudioPoll_Unauthorized(t *testing.T) {
 		t.Fatalf("expected %d, got %d", http.StatusUnauthorized, rec.Code)
 	}
 }
+
+func TestNewAudioIngestDeps(t *testing.T) {
+	deps := newAudioIngestDeps()
+
+	// Verify all fields are set
+	if deps.readUserID == nil {
+		t.Error("readUserID should not be nil")
+	}
+	if deps.withTimeout == nil {
+		t.Error("withTimeout should not be nil")
+	}
+	if deps.readAudio == nil {
+		t.Error("readAudio should not be nil")
+	}
+	if deps.validateWAV == nil {
+		t.Error("validateWAV should not be nil")
+	}
+	if svc := deps.newUserService(); svc == nil {
+		t.Error("newUserService should return non-nil")
+	}
+	_, _ = deps.ensureSTT()
+	_, _ = deps.ensureDeepseek()
+	_ = deps.isCoherent("test")
+	if deps.handleConversation == nil {
+		t.Error("handleConversation should not be nil")
+	}
+	if _, err := deps.executeCommand(nil, nil, deepseek.CommandResult{}); err == nil {
+		t.Error("executeCommand should error with nil params")
+	}
+}
+
+func TestAudioIngest_MethodNotAllowed(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/audio/ingest", nil)
+	rec := httptest.NewRecorder()
+
+	AudioIngest(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected %d, got %d", http.StatusMethodNotAllowed, rec.Code)
+	}
+}

@@ -55,13 +55,39 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">walkie-backend/cmd/server/main.go (0.0%)</option>
+				<option value="file0">walkie-backend/cmd/server/main.go (87.5%)</option>
 				
-				<option value="file1">walkie-backend/internal/config/db.go (0.0%)</option>
+				<option value="file1">walkie-backend/internal/config/db.go (82.9%)</option>
 				
-				<option value="file2">walkie-backend/internal/http/router.go (0.0%)</option>
+				<option value="file2">walkie-backend/internal/http/handlers/audio.go (95.1%)</option>
 				
-				<option value="file3">walkie-backend/internal/response/json.go (0.0%)</option>
+				<option value="file3">walkie-backend/internal/http/handlers/audio_helpers.go (83.2%)</option>
+				
+				<option value="file4">walkie-backend/internal/http/handlers/audio_queue.go (100.0%)</option>
+				
+				<option value="file5">walkie-backend/internal/http/handlers/auth.go (86.3%)</option>
+				
+				<option value="file6">walkie-backend/internal/http/handlers/channels.go (92.3%)</option>
+				
+				<option value="file7">walkie-backend/internal/http/handlers/shared.go (100.0%)</option>
+				
+				<option value="file8">walkie-backend/internal/http/handlers/ws.go (72.1%)</option>
+				
+				<option value="file9">walkie-backend/internal/http/router.go (100.0%)</option>
+				
+				<option value="file10">walkie-backend/internal/models/channel.go (100.0%)</option>
+				
+				<option value="file11">walkie-backend/internal/models/channel_membership.go (100.0%)</option>
+				
+				<option value="file12">walkie-backend/internal/models/user.go (100.0%)</option>
+				
+				<option value="file13">walkie-backend/internal/response/json.go (100.0%)</option>
+				
+				<option value="file14">walkie-backend/internal/services/user_service.go (89.8%)</option>
+				
+				<option value="file15">walkie-backend/pkg/deepseek/deepseek.go (94.4%)</option>
+				
+				<option value="file16">walkie-backend/pkg/stt/stt.go (86.8%)</option>
 				
 				</select>
 			</div>
@@ -81,6 +107,7 @@ import (
         "log"
         "net/http"
         "os"
+        "strings"
 
         "walkie-backend/internal/config"
         httproutes "walkie-backend/internal/http"
@@ -89,18 +116,42 @@ import (
 )
 
 func main() <span class="cov0" title="0">{
-        _ = godotenv.Load(".env")
-        config.ConnectDB()
-
-        mux := http.NewServeMux()
-        httproutes.Routes(mux)
-
-        addr := ":8080"
-        if v := os.Getenv("PORT"); v != "" </span><span class="cov0" title="0">{
-                addr = ":" + v
+        if err := run(http.ListenAndServe, config.ConnectDB); err != nil </span><span class="cov0" title="0">{
+                log.Fatal(err)
         }</span>
-        <span class="cov0" title="0">log.Println("Server running at http://localhost" + addr)
-        log.Fatal(http.ListenAndServe(addr, mux))</span>
+}
+
+func run(listen func(string, http.Handler) error, connectDB func()) error <span class="cov8" title="1">{
+        _ = godotenv.Load(".env")
+
+        addr, handler := buildServer(os.Getenv, connectDB, httproutes.Routes)
+        log.Println("Server running at http://localhost" + addr)
+        return listen(addr, handler)
+}</span>
+
+func buildServer(
+        getEnv func(string) string,
+        connectDB func(),
+        registerRoutes func(*http.ServeMux),
+) (string, http.Handler) <span class="cov8" title="1">{
+        if connectDB != nil </span><span class="cov8" title="1">{
+                connectDB()
+        }</span>
+
+        <span class="cov8" title="1">mux := http.NewServeMux()
+        if registerRoutes != nil </span><span class="cov8" title="1">{
+                registerRoutes(mux)
+        }</span>
+
+        <span class="cov8" title="1">return serverAddress(getEnv), mux</span>
+}
+
+func serverAddress(getEnv func(string) string) string <span class="cov8" title="1">{
+        port := strings.TrimSpace(getEnv("PORT"))
+        if port == "" </span><span class="cov8" title="1">{
+                port = "8080"
+        }</span>
+        <span class="cov8" title="1">return ":" + port</span>
 }
 </pre>
 		
@@ -110,12 +161,14 @@ import (
         "fmt"
         "log"
         "os"
+        "strings"
         "sync"
         "time"
 
         "walkie-backend/internal/models"
 
         "gorm.io/driver/postgres"
+        "gorm.io/driver/sqlite"
         "gorm.io/gorm"
 )
 
@@ -124,29 +177,43 @@ var (
         once sync.Once
 )
 
-func ConnectDB() <span class="cov0" title="0">{
-        once.Do(func() </span><span class="cov0" title="0">{
-                dsn := os.Getenv("DATABASE_URL")
-                db, err := gorm.Open(postgres.Open(dsn), &amp;gorm.Config{})
+func ConnectDB() <span class="cov8" title="1">{
+        once.Do(func() </span><span class="cov8" title="1">{
+                db, err := connectAndMigrate(os.Getenv("DATABASE_URL"))
                 if err != nil </span><span class="cov0" title="0">{
                         log.Fatal("Error connecting PostgreSQL:", err)
                 }</span>
-
-                <span class="cov0" title="0">if err := db.AutoMigrate(
-                        &amp;models.User{},
-                        &amp;models.Channel{},
-                        &amp;models.ChannelMembership{},
-                ); err != nil </span><span class="cov0" title="0">{
-                        log.Fatal("Error running migrations:", err)
-                }</span>
-
-                <span class="cov0" title="0">seedDatabase(db)
-                DB = db
+                <span class="cov8" title="1">DB = db
                 log.Println("DB connected, migrated and seeded")</span>
         })
 }
 
-func seedDatabase(db *gorm.DB) <span class="cov0" title="0">{
+func connectAndMigrate(dsn string) (*gorm.DB, error) <span class="cov8" title="1">{
+        var dialector gorm.Dialector
+        if dsn == ":memory:" || strings.HasPrefix(dsn, "file::") </span><span class="cov8" title="1">{
+                dialector = sqlite.Open(dsn)
+        }</span> else<span class="cov0" title="0"> {
+                dialector = postgres.Open(dsn)
+        }</span>
+
+        <span class="cov8" title="1">db, err := gorm.Open(dialector, &amp;gorm.Config{})
+        if err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">if err := db.AutoMigrate(
+                &amp;models.User{},
+                &amp;models.Channel{},
+                &amp;models.ChannelMembership{},
+        ); err != nil </span><span class="cov0" title="0">{
+                return nil, err
+        }</span>
+
+        <span class="cov8" title="1">seedDatabase(db)
+        return db, nil</span>
+}
+
+func seedDatabase(db *gorm.DB) <span class="cov8" title="1">{
         channels := []models.Channel{
                 {Code: "canal-1", Name: "Canal 1", MaxUsers: 100, IsPrivate: false},
                 {Code: "canal-2", Name: "Canal 2", MaxUsers: 100, IsPrivate: false},
@@ -155,44 +222,1332 @@ func seedDatabase(db *gorm.DB) <span class="cov0" title="0">{
                 {Code: "canal-5", Name: "Canal 5", MaxUsers: 100, IsPrivate: false},
         }
 
-        for _, ch := range channels </span><span class="cov0" title="0">{
+        for _, ch := range channels </span><span class="cov8" title="1">{
                 var count int64
                 db.Model(&amp;models.Channel{}).Where("code = ?", ch.Code).Count(&amp;count)
-                if count == 0 </span><span class="cov0" title="0">{
+                if count == 0 </span><span class="cov8" title="1">{
                         if err := db.Create(&amp;ch).Error; err != nil </span><span class="cov0" title="0">{
                                 log.Printf("Error seeding channel %s: %v", ch.Code, err)
-                        }</span> else<span class="cov0" title="0"> {
+                        }</span> else<span class="cov8" title="1"> {
                                 log.Printf("Canal creado: %s", ch.Code)
                         }</span>
                 }
         }
 
-        <span class="cov0" title="0">for i := 1; i &lt;= 10; i++ </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">for i := 1; i &lt;= 10; i++ </span><span class="cov8" title="1">{
                 displayName := fmt.Sprintf("usuario-%02d", i)
-                email := fmt.Sprintf("%s@example.com", displayName)
 
                 var count int64
                 db.Model(&amp;models.User{}).Where("display_name = ?", displayName).Count(&amp;count)
-                if count == 0 </span><span class="cov0" title="0">{
+                if count == 0 </span><span class="cov8" title="1">{
                         user := models.User{
                                 DisplayName:  displayName,
-                                Email:        email,
                                 IsActive:     true,
                                 LastActiveAt: time.Now(),
                         }
                         if err := db.Create(&amp;user).Error; err != nil </span><span class="cov0" title="0">{
                                 log.Printf("Error seeding user %s: %v", displayName, err)
-                        }</span> else<span class="cov0" title="0"> {
+                        }</span> else<span class="cov8" title="1"> {
                                 log.Printf("Usuario creado: %s (ID: %d)", displayName, user.ID)
                         }</span>
                 }
         }
 
-        <span class="cov0" title="0">log.Println("Database seeding completed")</span>
+        <span class="cov8" title="1">log.Println("Database seeding completed")</span>
 }
 </pre>
 		
-		<pre class="file" id="file2" style="display: none">package http
+		<pre class="file" id="file2" style="display: none">package handlers
+
+import (
+        "context"
+        "fmt"
+        "log"
+        "net/http"
+        "strings"
+        "time"
+
+        "walkie-backend/internal/models"
+        "walkie-backend/internal/services"
+        "walkie-backend/pkg/deepseek"
+)
+
+type userService interface {
+        GetUserWithChannel(uint) (*models.User, error)
+        GetAvailableChannels() ([]models.Channel, error)
+}
+
+type sttClient interface {
+        TranscribeAudio(context.Context, []byte) (string, error)
+}
+
+type deepseekClient interface {
+        AnalyzeTranscript(context.Context, string, []string, string, string) (deepseek.CommandResult, error)
+}
+
+type audioIngestDeps struct {
+        readUserID         func(*http.Request) (uint, bool)
+        withTimeout        func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+        readAudio          func(*http.Request) ([]byte, error)
+        validateWAV        func([]byte) bool
+        newUserService     func() userService
+        ensureSTT          func() (sttClient, error)
+        ensureDeepseek     func() (deepseekClient, error)
+        isCoherent         func(string) bool
+        handleConversation func(http.ResponseWriter, *models.User, []byte)
+        executeCommand     func(*models.User, *services.UserService, deepseek.CommandResult) (string, error)
+}
+
+func newAudioIngestDeps() audioIngestDeps <span class="cov8" title="1">{
+        return audioIngestDeps{
+                readUserID:  readUserIDHeader,
+                withTimeout: context.WithTimeout,
+                readAudio:   readAudioFromRequest,
+                validateWAV: isValidWAVFormat,
+                newUserService: func() userService </span><span class="cov8" title="1">{
+                        return services.NewUserService()
+                }</span>,
+                ensureSTT: func() (sttClient, error) <span class="cov8" title="1">{
+                        return EnsureSTTClient()
+                }</span>,
+                ensureDeepseek: func() (deepseekClient, error) <span class="cov8" title="1">{
+                        return EnsureDeepseekClient()
+                }</span>,
+                isCoherent: isLikelyCoherent,
+                handleConversation: func(w http.ResponseWriter, user *models.User, audio []byte) <span class="cov0" title="0">{
+                        handleAsConversation(w, user, audio)
+                }</span>,
+                executeCommand: func(user *models.User, svc *services.UserService, result deepseek.CommandResult) (string, error) <span class="cov8" title="1">{
+                        if svc == nil </span><span class="cov8" title="1">{
+                                return "", fmt.Errorf("servicio de usuarios no disponible")
+                        }</span>
+                        <span class="cov0" title="0">return executeCommand(user, svc, result)</span>
+                },
+        }
+}
+
+// POST /audio/ingest
+// Headers: X-User-ID: &lt;uint&gt;
+// Body: audio/wav (raw) o multipart/form-data; name=file
+func AudioIngest(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        runAudioIngest(w, r, newAudioIngestDeps())
+}</span>
+
+func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps) <span class="cov8" title="1">{
+        if r.Method != http.MethodPost </span><span class="cov8" title="1">{
+                http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        <span class="cov8" title="1">userID, ok := deps.readUserID(r)
+        if !ok </span><span class="cov8" title="1">{
+                http.Error(w, "X-Auth-Token requerido", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">ctx, cancel := deps.withTimeout(r.Context(), 120*time.Second)
+        defer cancel()
+
+        audioData, err := deps.readAudio(r)
+        if err != nil || len(audioData) == 0 </span><span class="cov8" title="1">{
+                log.Printf("Error leyendo audio de usuario %d: %v", userID, err)
+                http.Error(w, "Audio requerido", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Audio recibido de usuario %d, tamaño: %d bytes", userID, len(audioData))
+
+        if !deps.validateWAV(audioData) </span><span class="cov8" title="1">{
+                log.Printf("Formato de audio inválido de usuario %d", userID)
+                http.Error(w, "Formato de audio inválido. Se requiere WAV", http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">userSvc := deps.newUserService()
+        if userSvc == nil </span><span class="cov8" title="1">{
+                http.Error(w, "Servicio de usuarios no disponible", http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov8" title="1">user, err := userSvc.GetUserWithChannel(userID)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Usuario %d no encontrado: %v", userID, err)
+                http.Error(w, "Usuario no encontrado", http.StatusNotFound)
+                return
+        }</span>
+
+        <span class="cov8" title="1">sttClient, err := deps.ensureSTT()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("STT no disponible para usuario %d: %v", userID, err)
+                http.Error(w, "Servicio de transcripción no disponible", http.StatusServiceUnavailable)
+                return
+        }</span>
+
+        <span class="cov8" title="1">text, err := sttClient.TranscribeAudio(ctx, audioData)
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Error en STT para usuario %d: %v", userID, err)
+                if user.IsInChannel() </span><span class="cov8" title="1">{
+                        log.Printf("Enviando audio sin transcripción para usuario %d (en canal)", userID)
+                        deps.handleConversation(w, user, audioData)
+                        return
+                }</span>
+                <span class="cov8" title="1">w.WriteHeader(http.StatusNoContent)
+                return</span>
+        }
+
+        <span class="cov8" title="1">text = strings.TrimSpace(text)
+        log.Printf("Texto transcrito de usuario %d: '%s'", userID, text)
+
+        if !deps.isCoherent(text) </span><span class="cov8" title="1">{
+                log.Printf("Texto no coherente de usuario %d, ignorando", userID)
+                w.WriteHeader(http.StatusNoContent)
+                return
+        }</span>
+
+        <span class="cov8" title="1">currentState := "sin_canal"
+        if user.IsInChannel() </span><span class="cov8" title="1">{
+                currentState = user.GetCurrentChannelCode()
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Usuario %d en estado: %s", userID, currentState)
+
+        dsClient, err := deps.ensureDeepseek()
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Deepseek no disponible para usuario %d: %v", userID, err)
+                if user.IsInChannel() </span><span class="cov8" title="1">{
+                        deps.handleConversation(w, user, audioData)
+                }</span> else<span class="cov8" title="1"> {
+                        w.WriteHeader(http.StatusNoContent)
+                }</span>
+                <span class="cov8" title="1">return</span>
+        }
+
+        <span class="cov8" title="1">channels, err := userSvc.GetAvailableChannels()
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Error obteniendo canales para usuario %d: %v", userID, err)
+                if user.IsInChannel() </span><span class="cov8" title="1">{
+                        deps.handleConversation(w, user, audioData)
+                }</span> else<span class="cov8" title="1"> {
+                        w.WriteHeader(http.StatusNoContent)
+                }</span>
+                <span class="cov8" title="1">return</span>
+        }
+
+        <span class="cov8" title="1">chanCodes := make([]string, len(channels))
+        for i, ch := range channels </span><span class="cov8" title="1">{
+                chanCodes[i] = ch.Code
+        }</span>
+
+        <span class="cov8" title="1">result, err := dsClient.AnalyzeTranscript(ctx, text, chanCodes, currentState, "")
+        if err != nil </span><span class="cov8" title="1">{
+                log.Printf("Error analizando transcripción para usuario %d: %v", userID, err)
+                if user.IsInChannel() </span><span class="cov8" title="1">{
+                        log.Printf("Fallback: tratando como conversación para usuario %d", userID)
+                        deps.handleConversation(w, user, audioData)
+                }</span> else<span class="cov8" title="1"> {
+                        w.WriteHeader(http.StatusNoContent)
+                }</span>
+                <span class="cov8" title="1">return</span>
+        }
+
+        <span class="cov8" title="1">log.Printf("Resultado análisis usuario %d: comando=%v, intent=%s", userID, result.IsCommand, result.Intent)
+
+        if result.IsCommand </span><span class="cov8" title="1">{
+                svcPtr, _ := userSvc.(*services.UserService)
+                response, execErr := deps.executeCommand(user, svcPtr, result)
+                if execErr != nil </span><span class="cov8" title="1">{
+                        log.Printf("Error ejecutando comando para usuario %d: %v", userID, execErr)
+                        http.Error(w, execErr.Error(), http.StatusBadRequest)
+                        return
+                }</span>
+
+                <span class="cov8" title="1">log.Printf("Comando ejecutado para usuario %d, respuesta: %s", userID, response)
+                w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+                _, _ = w.Write([]byte(response))
+                return</span>
+        }
+
+        <span class="cov8" title="1">if !user.IsInChannel() </span><span class="cov8" title="1">{
+                log.Printf("Usuario %d no está en canal, ignorando conversación", userID)
+                w.WriteHeader(http.StatusNoContent)
+                return
+        }</span>
+
+        <span class="cov8" title="1">deps.handleConversation(w, user, audioData)</span>
+}
+
+// GET /audio/poll
+// Headers: X-Auth-Token: &lt;token&gt;
+// Endpoint para que los clientes obtengan audio pendiente mediante polling
+func AudioPoll(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if r.Method != http.MethodGet </span><span class="cov8" title="1">{
+                http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        // Leer userId desde token
+        <span class="cov8" title="1">userID, ok := readUserIDHeader(r)
+        if !ok </span><span class="cov8" title="1">{
+                http.Error(w, "X-Auth-Token requerido", http.StatusUnauthorized)
+                return
+        }</span>
+
+        // Verificar si hay audio pendiente
+        <span class="cov8" title="1">pendingAudio := DequeueAudio(userID)
+
+        if pendingAudio != nil </span><span class="cov8" title="1">{
+                // Devolver audio como WAV
+                log.Printf("Usuario %d recibe audio pendiente de usuario %d via polling", userID, pendingAudio.SenderID)
+
+                w.Header().Set("Content-Type", "audio/wav")
+                w.Header().Set("X-Audio-From", fmt.Sprintf("%d", pendingAudio.SenderID))
+                w.Header().Set("X-Channel", pendingAudio.Channel)
+                w.WriteHeader(http.StatusOK)
+                _, err := w.Write(pendingAudio.AudioData)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error enviando audio a usuario %d: %v", userID, err)
+                }</span>
+                <span class="cov8" title="1">return</span>
+        }
+
+        // No hay audio pendiente
+        <span class="cov8" title="1">w.WriteHeader(http.StatusNoContent)</span>
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package handlers
+
+import (
+        "fmt"
+        "io"
+        "log"
+        "mime"
+        "mime/multipart"
+        "net/http"
+        "strings"
+        "time"
+        "unicode"
+        "walkie-backend/internal/config"
+
+        "walkie-backend/internal/models"
+        "walkie-backend/internal/services"
+        "walkie-backend/pkg/deepseek"
+)
+
+type AudioRelayResponse struct {
+        Status      string  `json:"status"`
+        Channel     string  `json:"channel"`
+        Recipients  []uint  `json:"recipients"`
+        AudioBase64 string  `json:"audioBase64"`
+        Duration    float64 `json:"duration"`
+        SampleRate  int     `json:"sampleRate"`
+        Format      string  `json:"format"`
+}
+
+// executeCommand ejecuta un comando específico
+func executeCommand(user *models.User, userService *services.UserService, result deepseek.CommandResult) (string, error) <span class="cov8" title="1">{
+        switch result.Intent </span>{
+        case "request_channel_list":<span class="cov8" title="1">
+                return handleChannelListCommand(userService)</span>
+
+        case "request_channel_connect":<span class="cov8" title="1">
+                if len(result.Channels) == 0 </span><span class="cov8" title="1">{
+                        return "", fmt.Errorf("no se especificó canal para conectar")
+                }</span>
+                <span class="cov8" title="1">return handleChannelConnectCommand(user, userService, result.Channels[0])</span>
+
+        case "request_channel_disconnect":<span class="cov8" title="1">
+                return handleChannelDisconnectCommand(user, userService)</span>
+
+        default:<span class="cov0" title="0">
+                return result.Reply, nil</span>
+        }
+}
+
+// handleChannelListCommand maneja el comando de listar canales
+func handleChannelListCommand(userService *services.UserService) (string, error) <span class="cov8" title="1">{
+        channels, err := userService.GetAvailableChannels()
+        if err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("error obteniendo canales: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">if len(channels) == 0 </span><span class="cov8" title="1">{
+                return "No hay canales disponibles", nil
+        }</span>
+
+        // Crear lista más natural para voz
+        <span class="cov8" title="1">var response strings.Builder
+        response.WriteString("Canales disponibles: ")
+
+        channelNames := make([]string, 0, len(channels))
+        for _, ch := range channels </span><span class="cov8" title="1">{
+                channelNum := strings.TrimPrefix(ch.Code, "canal-")
+                channelNames = append(channelNames, channelNum)
+        }</span>
+
+        <span class="cov8" title="1">if len(channelNames) == 1 </span><span class="cov0" title="0">{
+                response.WriteString(channelNames[0])
+        }</span> else<span class="cov8" title="1"> if len(channelNames) == 2 </span><span class="cov0" title="0">{
+                response.WriteString(fmt.Sprintf("%s y %s", channelNames[0], channelNames[1]))
+        }</span> else<span class="cov8" title="1"> {
+                lastIdx := len(channelNames) - 1
+                for i, name := range channelNames </span><span class="cov8" title="1">{
+                        if i == lastIdx </span><span class="cov8" title="1">{
+                                response.WriteString(fmt.Sprintf("y %s", name))
+                        }</span> else<span class="cov8" title="1"> {
+                                response.WriteString(fmt.Sprintf("%s, ", name))
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">return response.String(), nil</span>
+}
+
+// handleChannelConnectCommand maneja el comando de conectar a canal
+func handleChannelConnectCommand(user *models.User, userService *services.UserService, channelCode string) (string, error) <span class="cov8" title="1">{
+        if err := userService.ConnectUserToChannel(user.ID, channelCode); err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("no se pudo conectar al canal %s: %w", channelCode, err)
+        }</span>
+
+        // Notificar via WebSocket el cambio de canal
+        <span class="cov8" title="1">moveClientToChannel(user.ID, channelCode)
+
+        // Extraer número del canal para respuesta más natural
+        channelNum := strings.TrimPrefix(channelCode, "canal-")
+        return fmt.Sprintf("Conectado al canal %s", channelNum), nil</span>
+}
+
+// handleChannelDisconnectCommand maneja el comando de desconectar del canal
+func handleChannelDisconnectCommand(user *models.User, userService *services.UserService) (string, error) <span class="cov8" title="1">{
+        if !user.IsInChannel() </span><span class="cov0" title="0">{
+                return "No estás conectado a ningún canal", nil
+        }</span>
+
+        <span class="cov8" title="1">currentChannel := user.GetCurrentChannelCode()
+        if err := userService.DisconnectUserFromCurrentChannel(user.ID); err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("no se pudo desconectar del canal: %w", err)
+        }</span>
+
+        // Notificar via WebSocket la desconexión
+        <span class="cov8" title="1">moveClientToChannel(user.ID, "")
+
+        // Extraer número del canal para respuesta más natural
+        channelNum := strings.TrimPrefix(currentChannel, "canal-")
+        return fmt.Sprintf("Desconectado del canal %s", channelNum), nil</span>
+}
+
+// handleAsConversation maneja el audio como conversación
+func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []byte) <span class="cov8" title="1">{
+        channelCode := user.GetCurrentChannelCode()
+        if channelCode == "" </span><span class="cov8" title="1">{
+                w.WriteHeader(http.StatusNoContent)
+                return
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Procesando audio de usuario %d en canal %s", user.ID, channelCode)
+
+        // 1. Enviar señales STOP/START via WebSocket (si hay)
+        startTransmission(channelCode, user.ID)
+
+        // 2. Enviar audio via WebSocket (si hay)
+        broadcastAudio(channelCode, user.ID, audioData)
+
+        // 3. Estimar duración del audio
+        duration := estimateAudioDuration(audioData)
+
+        // 4. Programar detención de transmisión
+        go func() </span><span class="cov8" title="1">{
+                time.Sleep(duration)
+                stopTransmission(channelCode, user.ID)
+        }</span>()
+
+        // 5. Obtener usuarios del canal desde BASE DE DATOS
+        <span class="cov8" title="1">userService := services.NewUserService()
+        channelUsers, err := userService.GetChannelActiveUsers(channelCode)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("Error obteniendo usuarios del canal %s: %v", channelCode, err)
+                w.WriteHeader(http.StatusNoContent)
+                return
+        }</span>
+
+        // Crear lista de recipients (excluir al sender)
+        <span class="cov8" title="1">recipients := make([]uint, 0, len(channelUsers))
+        for _, u := range channelUsers </span><span class="cov8" title="1">{
+                if u.ID != user.ID </span><span class="cov0" title="0">{
+                        recipients = append(recipients, u.ID)
+                }</span>
+        }
+
+        // 6. GUARDAR audio en cola para otros usuarios
+        <span class="cov8" title="1">EnqueueAudio(user.ID, channelCode, audioData, duration.Seconds(), recipients)
+
+        // 7. VERIFICAR si este usuario tiene audio pendiente
+        pendingAudio := DequeueAudio(user.ID)
+
+        if pendingAudio != nil </span><span class="cov0" title="0">{
+                log.Printf("Usuario %d recibe audio pendiente de usuario %d", user.ID, pendingAudio.SenderID)
+
+                w.Header().Set("Content-Type", "audio/wav")
+                w.Header().Set("X-Audio-From", fmt.Sprintf("%d", pendingAudio.SenderID))
+                w.Header().Set("X-Channel", pendingAudio.Channel)
+                w.WriteHeader(http.StatusOK)
+                _, err := w.Write(pendingAudio.AudioData)
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error enviando audio a usuario %d: %v", user.ID, err)
+                }</span>
+                <span class="cov0" title="0">return</span>
+        }
+
+        // 8. No hay audio pendiente, responder 204 No Content
+        <span class="cov8" title="1">log.Printf("Audio procesado: usuario=%d, canal=%s, destinatarios=%d, sin_audio_pendiente",
+                user.ID, channelCode, len(recipients))
+        w.WriteHeader(http.StatusNoContent)</span>
+}
+
+// --------------------------- helpers ---------------------------
+
+func readUserIDHeader(r *http.Request) (uint, bool) <span class="cov8" title="1">{
+        authToken := r.Header.Get("X-Auth-Token")
+        if authToken == "" </span><span class="cov8" title="1">{
+                return 0, false
+        }</span>
+
+        // Buscar usuario por token
+        <span class="cov8" title="1">var user models.User
+        if err := config.DB.Where("auth_token = ?", authToken).First(&amp;user).Error; err != nil </span><span class="cov0" title="0">{
+                return 0, false
+        }</span>
+
+        <span class="cov8" title="1">return user.ID, true</span>
+}
+
+func readAudioFromRequest(r *http.Request) ([]byte, error) <span class="cov8" title="1">{
+        ct := r.Header.Get("Content-Type")
+        mt, params, _ := mime.ParseMediaType(ct)
+
+        // multipart/form-data -&gt; campo "file"
+        if strings.HasPrefix(mt, "multipart/") </span><span class="cov8" title="1">{
+                mr := multipart.NewReader(r.Body, params["boundary"])
+                part, err := mr.NextPart()
+                if err != nil </span><span class="cov0" title="0">{
+                        return nil, err
+                }</span>
+                <span class="cov8" title="1">defer part.Close()
+                return io.ReadAll(io.LimitReader(part, 20&lt;&lt;20))</span> // 20 MB max
+        }
+
+        // raw audio/*
+        <span class="cov8" title="1">defer r.Body.Close()
+        return io.ReadAll(io.LimitReader(r.Body, 20&lt;&lt;20))</span>
+}
+
+// isValidWAVFormat valida que el audio sea formato WAV válido
+func isValidWAVFormat(data []byte) bool <span class="cov8" title="1">{
+        if len(data) &lt; 44 </span><span class="cov8" title="1">{
+                return false
+        }</span>
+        // Verificar header RIFF y WAVE
+        <span class="cov8" title="1">return string(data[0:4]) == "RIFF" &amp;&amp; string(data[8:12]) == "WAVE"</span>
+}
+
+func isLikelyCoherent(s string) bool <span class="cov8" title="1">{
+        s = strings.TrimSpace(s)
+
+        // Aceptar frases muy cortas comunes
+        if len(s) &lt;= 5 </span><span class="cov8" title="1">{
+                common := []string{"si", "sí", "no", "ok", "vale", "bien"}
+                lower := strings.ToLower(s)
+                for _, word := range common </span><span class="cov8" title="1">{
+                        if lower == word </span><span class="cov8" title="1">{
+                                return true
+                        }</span>
+                }
+        }
+
+        <span class="cov8" title="1">if len(s) &lt; 3 </span><span class="cov8" title="1">{
+                return false
+        }</span>
+
+        <span class="cov8" title="1">letters := 0
+        vowels := 0
+        wordCount := 0
+
+        for _, w := range strings.Fields(s) </span><span class="cov8" title="1">{
+                alpha := 0
+                hasVowel := false
+                for _, r := range w </span><span class="cov8" title="1">{
+                        if unicode.IsLetter(r) </span><span class="cov8" title="1">{
+                                alpha++
+                                letters++
+                                if strings.ContainsRune("aeiouáéíóúAEIOUÁÉÍÓÚ", r) </span><span class="cov8" title="1">{
+                                        vowels++
+                                        hasVowel = true
+                                }</span>
+                        }
+                }
+                <span class="cov8" title="1">if alpha &gt;= 1 &amp;&amp; hasVowel </span><span class="cov8" title="1">{
+                        wordCount++
+                }</span>
+        }
+
+        // Criterios más flexibles
+        <span class="cov8" title="1">return letters &gt;= 3 &amp;&amp; vowels &gt;= 1 &amp;&amp; wordCount &gt;= 1</span>
+}
+
+func estimateAudioDuration(audioData []byte) time.Duration <span class="cov8" title="1">{
+        dataSize := len(audioData)
+
+        // Verificar y quitar header WAV
+        if dataSize &gt; 44 &amp;&amp; string(audioData[:4]) == "RIFF" &amp;&amp; string(audioData[8:12]) == "WAVE" </span><span class="cov8" title="1">{
+                dataSize -= 44
+        }</span>
+
+        // 16kHz * 2 bytes (16-bit) = 32000 bytes por segundo
+        <span class="cov8" title="1">seconds := float64(dataSize) / 32000.0
+
+        // Límites de seguridad
+        if seconds &lt; 0.5 </span><span class="cov8" title="1">{
+                seconds = 0.5
+        }</span>
+        <span class="cov8" title="1">if seconds &gt; 30 </span><span class="cov8" title="1">{
+                seconds = 30
+        }</span>
+
+        <span class="cov8" title="1">return time.Duration(seconds * float64(time.Second))</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">package handlers
+
+import (
+        "log"
+        "sync"
+        "time"
+)
+
+// PendingAudio representa un audio pendiente de ser entregado
+type PendingAudio struct {
+        SenderID   uint
+        Channel    string
+        AudioData  []byte
+        Timestamp  time.Time
+        Duration   float64
+        SampleRate int
+        Format     string
+}
+
+// AudioQueue maneja la cola de audios pendientes por usuario
+type AudioQueue struct {
+        mu     sync.RWMutex
+        queues map[uint][]*PendingAudio
+}
+
+var globalAudioQueue = &amp;AudioQueue{
+        queues: make(map[uint][]*PendingAudio),
+}
+
+// EnqueueAudio agrega un audio a la cola de cada usuario del canal (excepto el sender)
+func EnqueueAudio(senderID uint, channel string, audioData []byte, duration float64, recipients []uint) <span class="cov8" title="1">{
+        globalAudioQueue.mu.Lock()
+        defer globalAudioQueue.mu.Unlock()
+
+        audio := &amp;PendingAudio{
+                SenderID:   senderID,
+                Channel:    channel,
+                AudioData:  audioData,
+                Timestamp:  time.Now(),
+                Duration:   duration,
+                SampleRate: 16000,
+                Format:     "wav",
+        }
+
+        // Agregar audio a la cola de cada recipient
+        for _, recipientID := range recipients </span><span class="cov8" title="1">{
+                if recipientID == senderID </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">if globalAudioQueue.queues[recipientID] == nil </span><span class="cov8" title="1">{
+                        globalAudioQueue.queues[recipientID] = make([]*PendingAudio, 0, 10)
+                }</span>
+
+                <span class="cov8" title="1">globalAudioQueue.queues[recipientID] = append(globalAudioQueue.queues[recipientID], audio)
+                log.Printf("Audio encolado para usuario %d (de usuario %d, canal %s)", recipientID, senderID, channel)</span>
+        }
+
+        <span class="cov8" title="1">go cleanOldAudios()</span>
+}
+
+// DequeueAudio obtiene el siguiente audio pendiente para un usuario
+func DequeueAudio(userID uint) *PendingAudio <span class="cov8" title="1">{
+        globalAudioQueue.mu.Lock()
+        defer globalAudioQueue.mu.Unlock()
+
+        queue := globalAudioQueue.queues[userID]
+        if len(queue) == 0 </span><span class="cov8" title="1">{
+                return nil
+        }</span>
+
+        // Obtener el primer audio (FIFO)
+        <span class="cov8" title="1">audio := queue[0]
+        globalAudioQueue.queues[userID] = queue[1:]
+
+        log.Printf("Audio desencolado para usuario %d (de usuario %d, canal %s)", userID, audio.SenderID, audio.Channel)
+        return audio</span>
+}
+
+// cleanOldAudios elimina audios más antiguos de 5 minutos
+func cleanOldAudios() <span class="cov8" title="1">{
+        globalAudioQueue.mu.Lock()
+        defer globalAudioQueue.mu.Unlock()
+
+        cutoff := time.Now().Add(-5 * time.Minute)
+
+        for userID, queue := range globalAudioQueue.queues </span><span class="cov8" title="1">{
+                filtered := make([]*PendingAudio, 0, len(queue))
+                for _, audio := range queue </span><span class="cov8" title="1">{
+                        if audio.Timestamp.After(cutoff) </span><span class="cov8" title="1">{
+                                filtered = append(filtered, audio)
+                        }</span>
+                }
+                <span class="cov8" title="1">globalAudioQueue.queues[userID] = filtered
+
+                // Eliminar cola vacía
+                if len(filtered) == 0 </span><span class="cov8" title="1">{
+                        delete(globalAudioQueue.queues, userID)
+                }</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">package handlers
+
+import (
+        "crypto/rand"
+        "encoding/hex"
+        "encoding/json"
+        "fmt"
+        "net/http"
+        "regexp"
+        "strings"
+        "time"
+
+        "walkie-backend/internal/config"
+        "walkie-backend/internal/models"
+
+        "golang.org/x/crypto/bcrypt"
+)
+
+// AuthenticationRequest is the expected request body from mobile
+// {"nombre":"...","pin":1234}  // pin int
+type AuthenticationRequest struct {
+        Nombre string `json:"nombre"`
+        Pin    int    `json:"pin"`
+}
+
+// AuthenticationResponse is the JSON response
+// {"message":"usuario registrado exitosamente","token":"..."}
+type AuthenticationResponse struct {
+        Message string `json:"message"`
+        Token   string `json:"token"`
+}
+
+// Authenticate handles POST /auth
+// - On success: 200, Content-Type: application/json, body: {"message":"usuario registrado exitosamente","token":"..."}
+// - On invalid: 401 application/json {"message":"credenciales inválidas"}
+func Authenticate(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        if r.Method != http.MethodPost </span><span class="cov8" title="1">{
+                http.Error(w, `{"message":"método no permitido"}`, http.StatusMethodNotAllowed)
+                return
+        }</span>
+
+        <span class="cov8" title="1">var req AuthenticationRequest
+        if err := json.NewDecoder(r.Body).Decode(&amp;req); err != nil </span><span class="cov8" title="1">{
+                http.Error(w, `{"message":"JSON inválido"}`, http.StatusBadRequest)
+                return
+        }</span>
+        <span class="cov8" title="1">req.Nombre = strings.TrimSpace(req.Nombre)
+        if req.Nombre == "" || req.Pin &lt;= 0 </span><span class="cov8" title="1">{
+                http.Error(w, `{"message":"nombre y pin son requeridos"}`, http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov8" title="1">var user models.User
+        if err := config.DB.Where("display_name = ?", req.Nombre).First(&amp;user).Error; err != nil </span><span class="cov8" title="1">{
+                pinHash, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%d", req.Pin)), bcrypt.DefaultCost)
+                user = models.User{
+                        DisplayName:  req.Nombre,
+                        IsActive:     true,
+                        LastActiveAt: time.Now(),
+                        PinHash:      string(pinHash),
+                }
+                if err := config.DB.Create(&amp;user).Error; err != nil </span><span class="cov0" title="0">{
+                        http.Error(w, `{"message":"no se pudo registrar usuario"}`, http.StatusInternalServerError)
+                        return
+                }</span>
+        } else<span class="cov8" title="1"> {
+                if user.PinHash != "" </span><span class="cov8" title="1">{
+                        if err := bcrypt.CompareHashAndPassword([]byte(user.PinHash), []byte(fmt.Sprintf("%d", req.Pin))); err != nil </span><span class="cov8" title="1">{
+                                w.Header().Set("Content-Type", "application/json")
+                                w.WriteHeader(http.StatusUnauthorized)
+                                _ = json.NewEncoder(w).Encode(AuthenticationResponse{Message: "credenciales inválidas"})
+                                return
+                        }</span>
+                } else<span class="cov8" title="1"> {
+                        pinHash, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%d", req.Pin)), bcrypt.DefaultCost)
+                        user.PinHash = string(pinHash)
+                }</span>
+                <span class="cov8" title="1">user.IsActive = true
+                user.LastActiveAt = time.Now()
+                _ = config.DB.Save(&amp;user).Error</span>
+        }
+
+        <span class="cov8" title="1">token, err := generateToken(32)
+        if err != nil </span><span class="cov0" title="0">{
+                http.Error(w, `{"message":"no se pudo generar token"}`, http.StatusInternalServerError)
+                return
+        }</span>
+        <span class="cov8" title="1">user.AuthToken = token
+        user.LastActiveAt = time.Now()
+        if err := config.DB.Save(&amp;user).Error; err != nil </span><span class="cov0" title="0">{
+                http.Error(w, `{"message":"no se pudo guardar token"}`, http.StatusInternalServerError)
+                return
+        }</span>
+
+        <span class="cov8" title="1">w.Header().Set("Content-Type", "application/json")
+        w.WriteHeader(http.StatusOK)
+        _ = json.NewEncoder(w).Encode(AuthenticationResponse{
+                Message: "usuario ingresado exitosamente",
+                Token:   token,
+        })</span>
+}
+
+func generateToken(n int) (string, error) <span class="cov8" title="1">{
+        b := make([]byte, n)
+        if _, err := rand.Read(b); err != nil </span><span class="cov0" title="0">{
+                return "", err
+        }</span>
+        <span class="cov8" title="1">return hex.EncodeToString(b), nil</span>
+}
+
+var nonAlnum = regexp.MustCompile(`[^a-z0-9\.]+`)
+
+func slugify(name string) string <span class="cov8" title="1">{
+        s := strings.ToLower(strings.TrimSpace(name))
+        s = strings.ReplaceAll(s, " ", ".")
+        s = nonAlnum.ReplaceAllString(s, "")
+        if s == "" </span><span class="cov8" title="1">{
+                return fmt.Sprintf("user.%d", time.Now().Unix())
+        }</span>
+        <span class="cov8" title="1">return s</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">package handlers
+
+import (
+        "net/http"
+
+        "walkie-backend/internal/config"
+        "walkie-backend/internal/models"
+        "walkie-backend/internal/response"
+)
+
+const PublicMaxUsers = 100
+
+func ListPublicChannels(w http.ResponseWriter, _ *http.Request) <span class="cov8" title="1">{
+        var channels []models.Channel
+        if err := config.DB.Where("is_private = ?", false).Find(&amp;channels).Error; err != nil </span><span class="cov8" title="1">{
+                response.WriteErr(w, http.StatusInternalServerError, "No se pudo listar canales")
+                return
+        }</span>
+
+        <span class="cov8" title="1">type item struct {
+                Code     string `json:"code"`
+                Name     string `json:"name"`
+                MaxUsers int    `json:"maxUsers"`
+        }
+
+        out := make([]item, 0, len(channels))
+        for _, ch := range channels </span><span class="cov8" title="1">{
+                out = append(out, item{
+                        Code:     ch.Code,
+                        Name:     ch.Name,
+                        MaxUsers: ch.MaxUsers,
+                })
+        }</span>
+        <span class="cov8" title="1">response.WriteJSON(w, http.StatusOK, out)</span>
+}
+
+func ChannelUsers(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        code := r.URL.Query().Get("channel")
+        if code == "" </span><span class="cov8" title="1">{
+                response.WriteErr(w, http.StatusBadRequest, "Canal inválido")
+                return
+        }</span>
+
+        <span class="cov8" title="1">var channel models.Channel
+        if err := config.DB.Where("code = ?", code).First(&amp;channel).Error; err != nil </span><span class="cov8" title="1">{
+                response.WriteErr(w, http.StatusNotFound, "Canal no encontrado")
+                return
+        }</span>
+
+        <span class="cov8" title="1">var memberships []models.ChannelMembership
+        if err := config.DB.
+                Preload("User").
+                Where("channel_id = ? AND active = ?", channel.ID, true).
+                Find(&amp;memberships).Error; err != nil </span><span class="cov0" title="0">{
+                response.WriteErr(w, http.StatusInternalServerError, "No se pudo obtener los usuarios del canal")
+                return
+        }</span>
+
+        <span class="cov8" title="1">type member struct {
+                ID          uint   `json:"id"`
+                DisplayName string `json:"displayName"`
+        }
+
+        out := make([]member, 0, len(memberships))
+        for _, m := range memberships </span><span class="cov8" title="1">{
+                out = append(out, member{ID: m.UserID, DisplayName: m.User.DisplayName})
+        }</span>
+        <span class="cov8" title="1">response.WriteJSON(w, http.StatusOK, out)</span>
+}
+</pre>
+		
+		<pre class="file" id="file7" style="display: none">package handlers
+
+import (
+        "sync"
+
+        "walkie-backend/pkg/deepseek"
+        "walkie-backend/pkg/stt"
+)
+
+var (
+        onceDeepseek sync.Once
+        dsClient     *deepseek.Client
+        dsErr        error
+
+        onceSTT sync.Once
+        sClient *stt.Client
+        sErr    error
+)
+
+func EnsureDeepseekClient() (*deepseek.Client, error) <span class="cov8" title="1">{
+        onceDeepseek.Do(func() </span><span class="cov8" title="1">{
+                dsClient, dsErr = deepseek.NewClient()
+        }</span>)
+        <span class="cov8" title="1">return dsClient, dsErr</span>
+}
+
+func EnsureSTTClient() (*stt.Client, error) <span class="cov8" title="1">{
+        onceSTT.Do(func() </span><span class="cov8" title="1">{
+                sClient, sErr = stt.NewClient()
+        }</span>)
+        <span class="cov8" title="1">return sClient, sErr</span>
+}
+</pre>
+		
+		<pre class="file" id="file8" style="display: none">package handlers
+
+import (
+        "encoding/json"
+        "log"
+        "net/http"
+        "sync"
+        "time"
+
+        "walkie-backend/internal/config"
+        "walkie-backend/internal/models"
+
+        "github.com/gorilla/websocket"
+)
+
+const (
+        // Límites de seguridad
+        maxAudioSize   = 10 * 1024 * 1024 // 10 MB
+        pingInterval   = 30 * time.Second
+        pongWait       = 60 * time.Second
+        writeWait      = 10 * time.Second
+        maxMessageSize = 15 * 1024 * 1024 // 15 MB
+)
+
+type wsClient struct {
+        conn    *websocket.Conn
+        userID  uint
+        channel string
+        mu      sync.Mutex
+        send    chan []byte
+}
+
+var (
+        upgrader = websocket.Upgrader{
+                CheckOrigin:     func(r *http.Request) bool <span class="cov8" title="1">{ return true }</span>,
+                ReadBufferSize:  1024,
+                WriteBufferSize: 1024,
+        }
+
+        registry = struct {
+                sync.RWMutex
+                byUser    map[uint]*wsClient
+                byChannel map[string]map[uint]*wsClient
+        }{
+                byUser:    make(map[uint]*wsClient),
+                byChannel: make(map[string]map[uint]*wsClient),
+        }
+)
+
+func HandleWebSocket(w http.ResponseWriter, r *http.Request) <span class="cov8" title="1">{
+        conn, err := upgrader.Upgrade(w, r, nil)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("ws upgrade: %v", err)
+                return
+        }</span>
+
+        // Configurar límites
+        <span class="cov8" title="1">conn.SetReadLimit(maxMessageSize)
+        conn.SetReadDeadline(time.Now().Add(pongWait))
+        conn.SetPongHandler(func(string) error </span><span class="cov0" title="0">{
+                conn.SetReadDeadline(time.Now().Add(pongWait))
+                return nil
+        }</span>)
+
+        <span class="cov8" title="1">var client *wsClient
+        defer func() </span><span class="cov8" title="1">{
+                if client != nil </span><span class="cov8" title="1">{
+                        removeClient(client)
+                        close(client.send)
+                }</span>
+                <span class="cov8" title="1">conn.Close()</span>
+        }()
+
+        // Leer handshake
+        <span class="cov8" title="1">_, raw, err := conn.ReadMessage()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Printf("ws handshake read: %v", err)
+                return
+        }</span>
+
+        <span class="cov8" title="1">var handshake struct {
+                UserID  uint   `json:"userId"`
+                Channel string `json:"channel"`
+        }
+        if err := json.Unmarshal(raw, &amp;handshake); err != nil || handshake.UserID == 0 </span><span class="cov8" title="1">{
+                _ = conn.WriteMessage(websocket.TextMessage, []byte("Handshake inválido"))
+                return
+        }</span>
+
+        // Validar usuario
+        <span class="cov8" title="1">var user models.User
+        if err := config.DB.Preload("CurrentChannel").First(&amp;user, handshake.UserID).Error; err != nil </span><span class="cov8" title="1">{
+                _ = conn.WriteMessage(websocket.TextMessage, []byte("Usuario no encontrado"))
+                return
+        }</span>
+
+        <span class="cov8" title="1">channel := handshake.Channel
+        if channel == "" &amp;&amp; user.CurrentChannel != nil </span><span class="cov0" title="0">{
+                channel = user.CurrentChannel.Code
+        }</span>
+
+        <span class="cov8" title="1">client = &amp;wsClient{
+                conn:    conn,
+                userID:  user.ID,
+                channel: channel,
+                send:    make(chan []byte, 256),
+        }
+        registerClient(client)
+
+        log.Printf("Cliente WebSocket conectado: usuario=%d, canal=%s", user.ID, channel)
+
+        _ = conn.WriteJSON(map[string]string{
+                "message": "Conexión establecida",
+                "channel": channel,
+        })
+
+        // Iniciar goroutines para lectura y escritura
+        go client.writePump()
+        go client.readPump()</span>
+}
+
+// readPump lee mensajes del WebSocket
+func (c *wsClient) readPump() <span class="cov8" title="1">{
+        defer func() </span><span class="cov8" title="1">{
+                removeClient(c)
+                c.conn.Close()
+        }</span>()
+
+        <span class="cov8" title="1">c.conn.SetReadLimit(maxMessageSize)
+        c.conn.SetReadDeadline(time.Now().Add(pongWait))
+        c.conn.SetPongHandler(func(string) error </span><span class="cov0" title="0">{
+                c.conn.SetReadDeadline(time.Now().Add(pongWait))
+                return nil
+        }</span>)
+
+        <span class="cov8" title="1">for </span><span class="cov8" title="1">{
+                _, _, err := c.conn.ReadMessage()
+                if err != nil </span><span class="cov8" title="1">{
+                        if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) </span><span class="cov0" title="0">{
+                                log.Printf("ws error user=%d: %v", c.userID, err)
+                        }</span>
+                        <span class="cov8" title="1">break</span>
+                }
+        }
+}
+
+// writePump envía mensajes al WebSocket
+func (c *wsClient) writePump() <span class="cov8" title="1">{
+        ticker := time.NewTicker(pingInterval)
+        defer func() </span><span class="cov8" title="1">{
+                ticker.Stop()
+                c.conn.Close()
+        }</span>()
+
+        <span class="cov8" title="1">for </span><span class="cov8" title="1">{
+                select </span>{
+                case message, ok := &lt;-c.send:<span class="cov8" title="1">
+                        c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+                        if !ok </span><span class="cov8" title="1">{
+                                c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+                                return
+                        }</span>
+
+                        <span class="cov0" title="0">w, err := c.conn.NextWriter(websocket.BinaryMessage)
+                        if err != nil </span><span class="cov0" title="0">{
+                                return
+                        }</span>
+                        <span class="cov0" title="0">w.Write(message)
+
+                        // Agregar mensajes en cola
+                        n := len(c.send)
+                        for i := 0; i &lt; n; i++ </span><span class="cov0" title="0">{
+                                w.Write(&lt;-c.send)
+                        }</span>
+
+                        <span class="cov0" title="0">if err := w.Close(); err != nil </span><span class="cov0" title="0">{
+                                return
+                        }</span>
+
+                case &lt;-ticker.C:<span class="cov0" title="0">
+                        c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+                        if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil </span><span class="cov0" title="0">{
+                                return
+                        }</span>
+                }
+        }
+}
+
+func registerClient(c *wsClient) <span class="cov8" title="1">{
+        registry.Lock()
+        defer registry.Unlock()
+
+        // Remover cliente anterior si existe
+        if oldClient, exists := registry.byUser[c.userID]; exists </span><span class="cov0" title="0">{
+                removeClientUnsafe(oldClient)
+        }</span>
+
+        <span class="cov8" title="1">registry.byUser[c.userID] = c
+        if c.channel != "" </span><span class="cov8" title="1">{
+                if registry.byChannel[c.channel] == nil </span><span class="cov8" title="1">{
+                        registry.byChannel[c.channel] = make(map[uint]*wsClient)
+                }</span>
+                <span class="cov8" title="1">registry.byChannel[c.channel][c.userID] = c</span>
+        }
+
+        <span class="cov8" title="1">log.Printf("Cliente registrado: usuario=%d, canal=%s", c.userID, c.channel)</span>
+}
+
+func removeClient(c *wsClient) <span class="cov8" title="1">{
+        registry.Lock()
+        defer registry.Unlock()
+        removeClientUnsafe(c)
+}</span>
+
+func removeClientUnsafe(c *wsClient) <span class="cov8" title="1">{
+        delete(registry.byUser, c.userID)
+        if c.channel != "" &amp;&amp; registry.byChannel[c.channel] != nil </span><span class="cov8" title="1">{
+                delete(registry.byChannel[c.channel], c.userID)
+                if len(registry.byChannel[c.channel]) == 0 </span><span class="cov8" title="1">{
+                        delete(registry.byChannel, c.channel)
+                }</span>
+        }
+        <span class="cov8" title="1">log.Printf("Cliente removido: usuario=%d, canal=%s", c.userID, c.channel)</span>
+}
+
+func moveClientToChannel(userID uint, newChannel string) <span class="cov8" title="1">{
+        registry.Lock()
+        defer registry.Unlock()
+
+        client, ok := registry.byUser[userID]
+        if !ok </span><span class="cov8" title="1">{
+                log.Printf("Cliente no encontrado para mover: usuario=%d", userID)
+                return
+        }</span>
+
+        // Remover del canal anterior
+        <span class="cov8" title="1">if client.channel != "" &amp;&amp; registry.byChannel[client.channel] != nil </span><span class="cov8" title="1">{
+                delete(registry.byChannel[client.channel], userID)
+                if len(registry.byChannel[client.channel]) == 0 </span><span class="cov8" title="1">{
+                        delete(registry.byChannel, client.channel)
+                }</span>
+        }
+
+        // Desconectar si no hay nuevo canal
+        <span class="cov8" title="1">if newChannel == "" </span><span class="cov8" title="1">{
+                delete(registry.byUser, userID)
+                client.channel = ""
+                log.Printf("Cliente desconectado: usuario=%d", userID)
+                return
+        }</span>
+
+        // Agregar al nuevo canal
+        <span class="cov8" title="1">client.channel = newChannel
+        if registry.byChannel[newChannel] == nil </span><span class="cov8" title="1">{
+                registry.byChannel[newChannel] = make(map[uint]*wsClient)
+        }</span>
+        <span class="cov8" title="1">registry.byChannel[newChannel][userID] = client
+
+        log.Printf("Cliente movido: usuario=%d, nuevo_canal=%s", userID, newChannel)
+
+        // Notificar al cliente del cambio
+        if client.conn != nil </span><span class="cov0" title="0">{
+                client.mu.Lock()
+                err := client.conn.WriteJSON(map[string]string{
+                        "type":    "channel_changed",
+                        "channel": newChannel,
+                })
+                client.mu.Unlock()
+
+                if err != nil </span><span class="cov0" title="0">{
+                        log.Printf("Error notificando al usuario %d del cambio de canal: %v", userID, err)
+                }</span>
+        }
+}
+
+func startTransmission(channel string, speakerID uint) <span class="cov8" title="1">{
+        registry.RLock()
+        defer registry.RUnlock()
+
+        clients := registry.byChannel[channel]
+        if len(clients) == 0 </span><span class="cov8" title="1">{
+                log.Printf("No hay clientes WebSocket en canal %s para iniciar transmisión", channel)
+                return
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Iniciando transmisión en canal %s, hablante=%d", channel, speakerID)
+
+        message := map[string]interface{}{
+                "type":   "transmission",
+                "from":   speakerID,
+                "action": "start",
+        }
+
+        for id, c := range clients </span><span class="cov8" title="1">{
+                if id == speakerID </span><span class="cov8" title="1">{
+                        message["signal"] = "START"
+                }</span> else<span class="cov8" title="1"> {
+                        message["signal"] = "STOP"
+                }</span>
+
+                <span class="cov8" title="1">msgBytes, _ := json.Marshal(message)
+                if c.conn != nil </span><span class="cov0" title="0">{
+                        c.mu.Lock()
+                        err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
+                        c.mu.Unlock()
+                        if err != nil </span><span class="cov0" title="0">{
+                                log.Printf("Error enviando señal START a usuario %d: %v", id, err)
+                        }</span>
+                        <span class="cov0" title="0">continue</span>
+                }
+
+                <span class="cov8" title="1">if c.send != nil </span><span class="cov8" title="1">{
+                        select </span>{
+                        case c.send &lt;- msgBytes:<span class="cov8" title="1"></span>
+                        default:<span class="cov0" title="0"></span>
+                        }
+                }
+        }
+}
+
+func stopTransmission(channel string, speakerID uint) <span class="cov8" title="1">{
+        registry.RLock()
+        defer registry.RUnlock()
+
+        clients := registry.byChannel[channel]
+        if len(clients) == 0 </span><span class="cov0" title="0">{
+                log.Printf("No hay clientes WebSocket en canal %s para detener transmisión", channel)
+                return
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Deteniendo transmisión en canal %s, hablante=%d", channel, speakerID)
+
+        message := map[string]interface{}{
+                "type":   "transmission",
+                "from":   speakerID,
+                "action": "stop",
+                "signal": "STOP",
+        }
+
+        msgBytes, _ := json.Marshal(message)
+
+        for id, c := range clients </span><span class="cov8" title="1">{
+                if c.conn != nil </span><span class="cov0" title="0">{
+                        c.mu.Lock()
+                        err := c.conn.WriteMessage(websocket.TextMessage, msgBytes)
+                        c.mu.Unlock()
+                        if err != nil </span><span class="cov0" title="0">{
+                                log.Printf("Error enviando señal STOP a usuario %d: %v", id, err)
+                        }</span>
+                        <span class="cov0" title="0">continue</span>
+                }
+
+                <span class="cov8" title="1">if c.send != nil </span><span class="cov8" title="1">{
+                        select </span>{
+                        case c.send &lt;- msgBytes:<span class="cov8" title="1"></span>
+                        default:<span class="cov0" title="0"></span>
+                        }
+                }
+        }
+}
+
+func broadcastAudio(channel string, senderID uint, audio []byte) <span class="cov8" title="1">{
+        if len(audio) &gt; maxAudioSize </span><span class="cov0" title="0">{
+                log.Printf("Audio demasiado grande: %d bytes (max: %d)", len(audio), maxAudioSize)
+                return
+        }</span>
+
+        <span class="cov8" title="1">registry.RLock()
+        defer registry.RUnlock()
+
+        clients := registry.byChannel[channel]
+        if len(clients) == 0 </span><span class="cov8" title="1">{
+                log.Printf("No hay clientes WebSocket en canal %s para broadcast de audio", channel)
+                return
+        }</span>
+
+        <span class="cov8" title="1">log.Printf("Broadcasting audio en canal %s desde usuario %d a %d clientes", channel, senderID, len(clients))
+
+        for id, c := range clients </span><span class="cov8" title="1">{
+                if c.conn != nil </span><span class="cov0" title="0">{
+                        c.mu.Lock()
+                        err := c.conn.WriteMessage(websocket.BinaryMessage, audio)
+                        c.mu.Unlock()
+                        if err != nil </span><span class="cov0" title="0">{
+                                log.Printf("Error enviando audio a usuario %d en canal %s: %v", id, channel, err)
+                        }</span>
+                        <span class="cov0" title="0">continue</span>
+                }
+
+                <span class="cov8" title="1">if c.send != nil </span><span class="cov8" title="1">{
+                        select </span>{
+                        case c.send &lt;- audio:<span class="cov8" title="1"></span>
+                        default:<span class="cov0" title="0"></span>
+                        }
+                }
+        }
+}
+</pre>
+		
+		<pre class="file" id="file9" style="display: none">package http
 
 import (
         "net/http"
@@ -200,7 +1555,7 @@ import (
         "walkie-backend/internal/http/handlers"
 )
 
-func Routes(mux *http.ServeMux) <span class="cov0" title="0">{
+func Routes(mux *http.ServeMux) <span class="cov8" title="1">{
         mux.HandleFunc("/channels/public", handlers.ListPublicChannels)
         mux.HandleFunc("/channel-users", handlers.ChannelUsers)
         mux.HandleFunc("/ws", handlers.HandleWebSocket)
@@ -210,22 +1565,694 @@ func Routes(mux *http.ServeMux) <span class="cov0" title="0">{
 }</span>
 </pre>
 		
-		<pre class="file" id="file3" style="display: none">package response
+		<pre class="file" id="file10" style="display: none">package models
+
+import "gorm.io/gorm"
+
+type Channel struct {
+        gorm.Model
+        Code      string              `gorm:"uniqueIndex;not null"`
+        Name      string              `gorm:"not null"`
+        MaxUsers  int                 `gorm:"default:100"`
+        IsPrivate bool                `gorm:"default:false"`
+        Members   []ChannelMembership `gorm:"foreignKey:ChannelID"`
+}
+
+// GetActiveMembers obtiene los miembros activos del canal
+func (c *Channel) GetActiveMembers(db *gorm.DB) ([]ChannelMembership, error) <span class="cov8" title="1">{
+        var memberships []ChannelMembership
+        err := db.Preload("User").Where("channel_id = ? AND active = ?", c.ID, true).Find(&amp;memberships).Error
+        return memberships, err
+}</span>
+
+// GetActiveMemberCount obtiene el número de miembros activos
+func (c *Channel) GetActiveMemberCount(db *gorm.DB) (int64, error) <span class="cov8" title="1">{
+        var count int64
+        err := db.Model(&amp;ChannelMembership{}).Where("channel_id = ? AND active = ?", c.ID, true).Count(&amp;count).Error
+        return count, err
+}</span>
+</pre>
+		
+		<pre class="file" id="file11" style="display: none">package models
+
+import (
+        "time"
+
+        "gorm.io/gorm"
+)
+
+type ChannelMembership struct {
+        gorm.Model
+        UserID    uint      `gorm:"index;not null"`
+        User      User      `gorm:"foreignKey:UserID"`
+        ChannelID uint      `gorm:"index;not null"`
+        Channel   Channel   `gorm:"foreignKey:ChannelID"`
+        Active    bool      `gorm:"default:true;index"`
+        JoinedAt  time.Time `gorm:"default:CURRENT_TIMESTAMP"`
+        LeftAt    *time.Time
+}
+
+// Activate marca la membresía como activa
+func (cm *ChannelMembership) Activate() <span class="cov8" title="1">{
+        cm.Active = true
+        cm.LeftAt = nil
+}</span>
+
+// Deactivate marca la membresía como inactiva
+func (cm *ChannelMembership) Deactivate() <span class="cov8" title="1">{
+        cm.Active = false
+        now := time.Now()
+        cm.LeftAt = &amp;now
+}</span>
+</pre>
+		
+		<pre class="file" id="file12" style="display: none">package models
+
+import (
+        "time"
+
+        "gorm.io/gorm"
+)
+
+type User struct {
+        gorm.Model
+        DisplayName      string   `gorm:"uniqueIndex;not null"`
+        CurrentChannelID *uint    `gorm:"index"`
+        CurrentChannel   *Channel `gorm:"foreignKey:CurrentChannelID"`
+        IsActive         bool     `gorm:"default:true"`
+        LastActiveAt     time.Time
+        Memberships      []ChannelMembership `gorm:"foreignKey:UserID"`
+        PinHash          string              `gorm:"size:255"`
+        AuthToken        string              `gorm:"size:255;index"`
+}
+
+// IsInChannel verifica si el usuario está actualmente en un canal
+func (u *User) IsInChannel() bool <span class="cov8" title="1">{
+        return u.CurrentChannelID != nil
+}</span>
+
+// GetCurrentChannelCode obtiene el código del canal actual
+func (u *User) GetCurrentChannelCode() string <span class="cov8" title="1">{
+        if u.CurrentChannel != nil </span><span class="cov8" title="1">{
+                return u.CurrentChannel.Code
+        }</span>
+        <span class="cov8" title="1">return ""</span>
+}
+</pre>
+		
+		<pre class="file" id="file13" style="display: none">package response
 
 import (
         "encoding/json"
         "net/http"
 )
 
-func WriteJSON(w http.ResponseWriter, status int, data any) <span class="cov0" title="0">{
+func WriteJSON(w http.ResponseWriter, status int, data any) <span class="cov8" title="1">{
         w.Header().Set("Content-Type", "application/json")
         w.WriteHeader(status)
         _ = json.NewEncoder(w).Encode(data)
 }</span>
 
-func WriteErr(w http.ResponseWriter, status int, message string) <span class="cov0" title="0">{
+func WriteErr(w http.ResponseWriter, status int, message string) <span class="cov8" title="1">{
         WriteJSON(w, status, map[string]string{"error": message})
 }</span>
+</pre>
+		
+		<pre class="file" id="file14" style="display: none">package services
+
+import (
+        "fmt"
+        "time"
+
+        "walkie-backend/internal/config"
+        "walkie-backend/internal/models"
+
+        "gorm.io/gorm"
+)
+
+type UserService struct {
+        db *gorm.DB
+}
+
+func NewUserService() *UserService <span class="cov8" title="1">{
+        return &amp;UserService{db: config.DB}
+}</span>
+
+// ConnectUserToChannel conecta un usuario a un canal específico
+func (s *UserService) ConnectUserToChannel(userID uint, channelCode string) error <span class="cov8" title="1">{
+        var channel models.Channel
+        if err := s.db.Where("code = ?", channelCode).First(&amp;channel).Error; err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("canal no encontrado: %s", channelCode)
+        }</span>
+
+        // Verificar capacidad del canal
+        <span class="cov8" title="1">activeCount, err := channel.GetActiveMemberCount(s.db)
+        if err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("error verificando capacidad del canal: %w", err)
+        }</span>
+        <span class="cov8" title="1">if activeCount &gt;= int64(channel.MaxUsers) </span><span class="cov8" title="1">{
+                return fmt.Errorf("canal lleno: %s", channelCode)
+        }</span>
+
+        // Desconectar del canal actual si existe
+        <span class="cov8" title="1">if err := s.DisconnectUserFromCurrentChannel(userID); err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("error desconectando del canal actual: %w", err)
+        }</span>
+
+        // Buscar o crear membresía
+        <span class="cov8" title="1">var membership models.ChannelMembership
+        err = s.db.Where("user_id = ? AND channel_id = ?", userID, channel.ID).First(&amp;membership).Error
+        if err == gorm.ErrRecordNotFound </span><span class="cov8" title="1">{
+                // Crear nueva membresía
+                membership = models.ChannelMembership{
+                        UserID:    userID,
+                        ChannelID: channel.ID,
+                        Active:    true,
+                        JoinedAt:  time.Now(),
+                }
+                if err := s.db.Create(&amp;membership).Error; err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("error creando membresía: %w", err)
+                }</span>
+        } else<span class="cov8" title="1"> if err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("error buscando membresía: %w", err)
+        }</span> else<span class="cov8" title="1"> {
+                // Activar membresía existente
+                membership.Activate()
+                if err := s.db.Save(&amp;membership).Error; err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("error activando membresía: %w", err)
+                }</span>
+        }
+
+        // Actualizar usuario
+        <span class="cov8" title="1">if err := s.db.Model(&amp;models.User{}).Where("id = ?", userID).Updates(map[string]interface{}{
+                "current_channel_id": channel.ID,
+                "last_active_at":     time.Now(),
+        }).Error; err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("error actualizando usuario: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// DisconnectUserFromCurrentChannel desconecta al usuario de su canal actual
+func (s *UserService) DisconnectUserFromCurrentChannel(userID uint) error <span class="cov8" title="1">{
+        var user models.User
+        if err := s.db.First(&amp;user, userID).Error; err != nil </span><span class="cov8" title="1">{
+                return fmt.Errorf("usuario no encontrado: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">if user.CurrentChannelID == nil </span><span class="cov8" title="1">{
+                return nil // Ya no está en ningún canal
+        }</span>
+
+        // Desactivar membresía actual
+        <span class="cov8" title="1">var membership models.ChannelMembership
+        if err := s.db.Where("user_id = ? AND channel_id = ? AND active = ?", userID, *user.CurrentChannelID, true).First(&amp;membership).Error; err == nil </span><span class="cov8" title="1">{
+                membership.Deactivate()
+                if err := s.db.Save(&amp;membership).Error; err != nil </span><span class="cov0" title="0">{
+                        return fmt.Errorf("error desactivando membresía: %w", err)
+                }</span>
+        }
+
+        // Limpiar canal actual del usuario
+        <span class="cov8" title="1">if err := s.db.Model(&amp;user).Updates(map[string]interface{}{
+                "current_channel_id": nil,
+                "last_active_at":     time.Now(),
+        }).Error; err != nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("error actualizando usuario: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// GetUserWithChannel obtiene un usuario con su canal actual cargado
+func (s *UserService) GetUserWithChannel(userID uint) (*models.User, error) <span class="cov8" title="1">{
+        var user models.User
+        if err := s.db.Preload("CurrentChannel").First(&amp;user, userID).Error; err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("usuario no encontrado: %w", err)
+        }</span>
+        <span class="cov8" title="1">return &amp;user, nil</span>
+}
+
+// GetChannelActiveUsers obtiene los usuarios activos de un canal
+func (s *UserService) GetChannelActiveUsers(channelCode string) ([]models.User, error) <span class="cov8" title="1">{
+        var users []models.User
+        err := s.db.Joins("JOIN channel_memberships ON users.id = channel_memberships.user_id").
+                Joins("JOIN channels ON channel_memberships.channel_id = channels.id").
+                Where("channels.code = ? AND channel_memberships.active = ?", channelCode, true).
+                Find(&amp;users).Error
+        return users, err
+}</span>
+
+// GetAvailableChannels obtiene los canales públicos disponibles
+func (s *UserService) GetAvailableChannels() ([]models.Channel, error) <span class="cov8" title="1">{
+        var channels []models.Channel
+        if err := s.db.Where("is_private = ?", false).Find(&amp;channels).Error; err != nil </span><span class="cov8" title="1">{
+                return nil, fmt.Errorf("error obteniendo canales: %w", err)
+        }</span>
+        <span class="cov8" title="1">return channels, nil</span>
+}
+</pre>
+		
+		<pre class="file" id="file15" style="display: none">package deepseek
+
+import (
+        "bytes"
+        "context"
+        "encoding/json"
+        "errors"
+        "fmt"
+        "io"
+        "log"
+        "net/http"
+        "os"
+        "strings"
+        "time"
+)
+
+const (
+        defaultModel   = "qwen2.5:1.5b"
+        defaultBaseURL = "http://deepseek:11434"
+        systemPrompt   = `Eres un asistente de walkie-talkie. Tu ÚNICA función es detectar COMANDOS EXPLÍCITOS de sistema.
+
+REGLA #1: Solo marca como comando si la frase contiene LITERALMENTE las palabras clave exactas.
+
+COMANDOS VÁLIDOS (SOLO ESTOS):
+
+1. LISTAR CANALES - requiere TODAS estas palabras:
+   ✓ "lista" Y "canales"
+   ✓ "tráeme" Y "canales"
+   ✓ "dame" Y "canales"
+   ✓ "cuáles" Y "canales"
+   ✓ "qué canales"
+   ✓ "canales disponibles"
+
+2. CONECTAR A CANAL - requiere:
+   ✓ "conecta" Y número
+   ✓ "conectar" Y número
+   ✓ "cambiar" Y "canal" Y número
+   ✓ "ir" Y "canal" Y número
+   ✓ "entrar" Y "canal" Y número
+
+3. DESCONECTAR - requiere:
+   ✓ "salir" Y "canal"
+   ✓ "desconectar" Y "canal"
+
+4. LISTAR USUARIOS - requiere:
+   ✓ "lista" Y "usuarios"
+   ✓ "tráeme" Y "usuarios"
+   ✓ "dame" Y "usuarios"
+   ✓ "cuáles" Y "usuarios"
+   ✓ "qué usuarios"
+   ✓ "usuarios disponibles"
+
+5. EN QUE CANAL ESTOY - requiere:
+   ✓ "en qué canal estoy"
+   ✓ "dime mi canal"
+   ✓ "cuál es mi canal"
+   ✓ "qué canal es"
+   ✓ "mi canal"
+   ✓ "mi canal actual"
+
+TODO LO DEMÁS ES CONVERSACIÓN, incluyendo:
+✗ Saludos: "hola", "buenos días", "qué tal"
+✗ Preguntas generales: "cómo estás", "qué haces", "cómo te va"
+✗ Conversación casual: cualquier frase que NO contenga las palabras clave exactas
+✗ Nombres de personas: "Carlos", "María", "Juan"
+
+EJEMPLOS DE COMANDOS:
+{"is_command": true, "intent": "request_channel_list", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "tráeme la lista de canales"
+
+{"is_command": true, "intent": "request_channel_connect", "reply": "", "channels": ["canal-1"], "state": "sin_canal"}
+Entrada: "conectarme al canal 1"
+
+{"is_command": true, "intent": "request_channel_disconnect", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "salir del canal"
+
+EJEMPLOS DE CONVERSACIÓN (NO SON COMANDOS):
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "hola carlos cómo estás"
+
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "qué estás haciendo"
+
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "buenas tardes a todos"
+
+{"is_command": false, "intent": "conversation", "reply": "", "channels": [], "state": "canal-1"}
+Entrada: "carlos cómo está que está haciendo"
+
+FORMATO DE RESPUESTA (SOLO JSON, SIN MARKDOWN):
+{
+  "is_command": true/false,
+  "intent": "request_channel_list" | "request_channel_connect" | "request_channel_disconnect" | "conversation",
+  "reply": "",
+  "channels": ["canal-X"] (solo si intent=request_channel_connect),
+  "state": "sin_canal" | "canal-X"
+}
+
+IMPORTANTE: 
+- Responde SOLO el JSON, sin explicaciones
+- Si tienes duda, marca como conversación (is_command: false)
+- Solo marca comando si estás 100% seguro de las palabras clave
+- SI EL USUARIO ESTA EN UN CANAL DEBES ESTAR ATENTO TAMBIEN SI EN LUGAR DE UN AUDIO, MANDA UN COMANDO, COMO POR EJEMPLO: "salir del canal-x, (x=1,2,3,4,5) o "dame la lista de canales"`
+)
+
+type Client struct {
+        httpClient *http.Client
+        baseURL    string
+        apiKey     string
+        model      string
+}
+
+type CommandResult struct {
+        IsCommand      bool     `json:"is_command"`
+        Intent         string   `json:"intent"`
+        Reply          string   `json:"reply"`
+        Channels       []string `json:"channels,omitempty"`
+        State          string   `json:"state"`
+        PendingChannel string   `json:"pending_channel,omitempty"`
+}
+
+type message struct {
+        Role    string `json:"role"`
+        Content string `json:"content"`
+}
+
+type chatRequest struct {
+        Model    string    `json:"model"`
+        Messages []message `json:"messages"`
+        Stream   bool      `json:"stream"`
+}
+
+type chatResponse struct {
+        Message message `json:"message"`
+}
+
+var ErrEmptyTranscript = errors.New("deepseek: transcripción vacía")
+
+func NewClient() (*Client, error) <span class="cov8" title="1">{
+        baseURL := strings.TrimSpace(os.Getenv("DEEPSEEK_API_URL"))
+        if baseURL == "" </span><span class="cov8" title="1">{
+                baseURL = defaultBaseURL
+        }</span>
+        <span class="cov8" title="1">model := strings.TrimSpace(os.Getenv("DEEPSEEK_MODEL"))
+        if model == "" </span><span class="cov8" title="1">{
+                model = defaultModel
+        }</span>
+        <span class="cov8" title="1">apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
+
+        return &amp;Client{
+                httpClient: &amp;http.Client{Timeout: 180 * time.Second},
+                baseURL:    strings.TrimRight(baseURL, "/"),
+                apiKey:     apiKey,
+                model:      model,
+        }, nil</span>
+}
+
+func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, channels []string, currentState string, pendingChannel string) (CommandResult, error) <span class="cov8" title="1">{
+        transcript = strings.TrimSpace(transcript)
+        if transcript == "" </span><span class="cov8" title="1">{
+                return CommandResult{}, ErrEmptyTranscript
+        }</span>
+
+        <span class="cov8" title="1">fallback := CommandResult{
+                IsCommand: false,
+                Intent:    "conversation",
+                Reply:     transcript,
+                State:     currentState,
+        }
+
+        userPrompt := buildAnalysisPrompt(transcript, channels, currentState, pendingChannel)
+
+        reqBody := chatRequest{
+                Model:  c.model,
+                Stream: false,
+                Messages: []message{
+                        {Role: "system", Content: systemPrompt},
+                        {Role: "user", Content: userPrompt},
+                },
+        }
+
+        payload, err := json.Marshal(reqBody)
+        if err != nil </span><span class="cov0" title="0">{
+                return fallback, fmt.Errorf("deepseek: serialize request: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">url := fmt.Sprintf("%s/api/chat", c.baseURL)
+        httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+        if err != nil </span><span class="cov0" title="0">{
+                return fallback, fmt.Errorf("deepseek: new request: %w", err)
+        }</span>
+        <span class="cov8" title="1">httpReq.Header.Set("Content-Type", "application/json")
+        if c.apiKey != "" </span><span class="cov0" title="0">{
+                httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+        }</span>
+
+        <span class="cov8" title="1">resp, err := c.httpClient.Do(httpReq)
+        if err != nil </span><span class="cov8" title="1">{
+                return fallback, fmt.Errorf("deepseek: request error: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer resp.Body.Close()
+
+        if resp.StatusCode != http.StatusOK </span><span class="cov8" title="1">{
+                body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+                return fallback, fmt.Errorf("deepseek: status %d: %s", resp.StatusCode, string(body))
+        }</span>
+
+        <span class="cov8" title="1">var decoded chatResponse
+        if err := json.NewDecoder(resp.Body).Decode(&amp;decoded); err != nil </span><span class="cov0" title="0">{
+                return fallback, fmt.Errorf("deepseek: parse response: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">content := strings.TrimSpace(decoded.Message.Content)
+        if content == "" </span><span class="cov0" title="0">{
+                return fallback, errors.New("deepseek: respuesta vacía")
+        }</span>
+
+        // Extraer JSON de respuesta markdown si es necesario
+        <span class="cov8" title="1">jsonContent := extractJSONFromResponse(content)
+
+        var result CommandResult
+        if err := json.Unmarshal([]byte(jsonContent), &amp;result); err != nil </span><span class="cov8" title="1">{
+                // Log para debugging
+                log.Printf("DEBUG: Respuesta de Deepseek: %s", content)
+                log.Printf("DEBUG: JSON extraído: %s", jsonContent)
+                return fallback, fmt.Errorf("deepseek: json inválido: %w", err)
+        }</span>
+
+        // Validación adicional: si el intent no es válido, forzar conversación
+        <span class="cov8" title="1">validIntents := map[string]bool{
+                "request_channel_list":       true,
+                "request_channel_connect":    true,
+                "request_channel_disconnect": true,
+                "conversation":               true,
+        }
+
+        if !validIntents[result.Intent] </span><span class="cov8" title="1">{
+                log.Printf("WARN: Intent inválido '%s', forzando conversación", result.Intent)
+                result.IsCommand = false
+                result.Intent = "conversation"
+        }</span>
+
+        <span class="cov8" title="1">return result, nil</span>
+}
+
+// extractJSONFromResponse extrae JSON de una respuesta que puede estar en formato markdown
+func extractJSONFromResponse(content string) string <span class="cov8" title="1">{
+        content = strings.TrimSpace(content)
+
+        // Si ya es JSON válido, devolverlo tal como está
+        if strings.HasPrefix(content, "{") &amp;&amp; strings.HasSuffix(content, "}") </span><span class="cov8" title="1">{
+                return content
+        }</span>
+
+        // Buscar JSON dentro de bloques de código markdown
+        <span class="cov8" title="1">if strings.Contains(content, "```") </span><span class="cov8" title="1">{
+                lines := strings.Split(content, "\n")
+                var jsonLines []string
+                inCodeBlock := false
+
+                for _, line := range lines </span><span class="cov8" title="1">{
+                        trimmed := strings.TrimSpace(line)
+                        if strings.HasPrefix(trimmed, "```") </span><span class="cov8" title="1">{
+                                inCodeBlock = !inCodeBlock
+                                continue</span>
+                        }
+                        <span class="cov8" title="1">if inCodeBlock &amp;&amp; trimmed != "" </span><span class="cov8" title="1">{
+                                jsonLines = append(jsonLines, line)
+                        }</span>
+                }
+
+                <span class="cov8" title="1">if len(jsonLines) &gt; 0 </span><span class="cov8" title="1">{
+                        return strings.Join(jsonLines, "\n")
+                }</span>
+        }
+
+        // Buscar líneas que contengan JSON
+        <span class="cov8" title="1">lines := strings.Split(content, "\n")
+        for _, line := range lines </span><span class="cov8" title="1">{
+                line = strings.TrimSpace(line)
+                if strings.HasPrefix(line, "{") &amp;&amp; strings.HasSuffix(line, "}") </span><span class="cov8" title="1">{
+                        return line
+                }</span>
+        }
+
+        // Como último recurso, devolver el contenido original
+        <span class="cov8" title="1">return content</span>
+}
+
+func buildAnalysisPrompt(transcript string, channels []string, currentState string, pendingChannel string) string <span class="cov8" title="1">{
+        var sb strings.Builder
+        sb.WriteString("Analiza este texto:\n")
+        sb.WriteString("\"")
+        sb.WriteString(transcript)
+        sb.WriteString("\"\n\n")
+
+        sb.WriteString("Estado actual: ")
+        sb.WriteString(currentState)
+        sb.WriteString("\n")
+
+        if pendingChannel != "" </span><span class="cov8" title="1">{
+                sb.WriteString("Canal pendiente: ")
+                sb.WriteString(pendingChannel)
+                sb.WriteString("\n")
+        }</span>
+
+        <span class="cov8" title="1">if len(channels) &gt; 0 </span><span class="cov8" title="1">{
+                sb.WriteString("Canales disponibles: ")
+                sb.WriteString(strings.Join(channels, ", "))
+                sb.WriteString("\n")
+        }</span>
+
+        <span class="cov8" title="1">sb.WriteString("\nRecuerda: Solo marca como comando si contiene palabras clave EXACTAS. En caso de duda, marca como conversación.")
+        return sb.String()</span>
+}
+</pre>
+		
+		<pre class="file" id="file16" style="display: none">package stt
+
+import (
+        "bytes"
+        "context"
+        "encoding/binary"
+        "encoding/json"
+        "fmt"
+        "io"
+        "math"
+        "mime/multipart"
+        "net/http"
+        "os"
+        "strings"
+        "time"
+)
+
+type Client struct {
+        httpClient *http.Client
+        baseURL    string
+}
+
+type transcriptionResponse struct {
+        Text string `json:"text"`
+}
+
+func NewClient() (*Client, error) <span class="cov8" title="1">{
+        baseURL := strings.TrimSpace(os.Getenv("STT_API_URL"))
+        if baseURL == "" </span><span class="cov0" title="0">{
+                return nil, fmt.Errorf("STT_API_URL no configurada")
+        }</span>
+        <span class="cov8" title="1">return &amp;Client{
+                httpClient: &amp;http.Client{Timeout: 60 * time.Second},
+                baseURL:    baseURL,
+        }, nil</span>
+}
+
+func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string, error) <span class="cov8" title="1">{
+        if len(audioData) == 0 </span><span class="cov8" title="1">{
+                return "", fmt.Errorf("audio vacío")
+        }</span>
+
+        <span class="cov8" title="1">var buf bytes.Buffer
+        writer := multipart.NewWriter(&amp;buf)
+
+        filePart, err := writer.CreateFormFile("file", "audio.wav")
+        if err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("crear form file: %w", err)
+        }</span>
+        <span class="cov8" title="1">if _, err := filePart.Write(audioData); err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("escribir audio: %w", err)
+        }</span>
+
+        <span class="cov8" title="1">if err := writer.WriteField("model", "Systran/faster-whisper-small"); err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("añadir modelo: %w", err)
+        }</span>
+        <span class="cov8" title="1">if err := writer.WriteField("language", "es"); err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("añadir idioma: %w", err)
+        }</span>
+        <span class="cov8" title="1">writer.Close()
+
+        req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, &amp;buf)
+        if err != nil </span><span class="cov0" title="0">{
+                return "", fmt.Errorf("crear request: %w", err)
+        }</span>
+        <span class="cov8" title="1">req.Header.Set("Content-Type", writer.FormDataContentType())
+
+        resp, err := c.httpClient.Do(req)
+        if err != nil </span><span class="cov8" title="1">{
+                return "", fmt.Errorf("ejecutar request: %w", err)
+        }</span>
+        <span class="cov8" title="1">defer resp.Body.Close()
+
+        if resp.StatusCode != http.StatusOK </span><span class="cov8" title="1">{
+                body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+                return "", fmt.Errorf("STT error %d: %s", resp.StatusCode, string(body))
+        }</span>
+
+        <span class="cov8" title="1">var decoded transcriptionResponse
+        if err := json.NewDecoder(resp.Body).Decode(&amp;decoded); err != nil </span><span class="cov8" title="1">{
+                return "", fmt.Errorf("decodificar respuesta: %w", err)
+        }</span>
+        <span class="cov8" title="1">return strings.TrimSpace(decoded.Text), nil</span>
+}
+
+func (c *Client) IsHumanSpeech(audioData []byte) bool <span class="cov8" title="1">{
+        payload := audioData
+        if len(payload) &gt; 44 &amp;&amp; string(payload[:4]) == "RIFF" &amp;&amp; string(payload[8:12]) == "WAVE" </span><span class="cov8" title="1">{
+                payload = payload[44:]
+        }</span>
+        <span class="cov8" title="1">if len(payload) &lt; 2000 </span><span class="cov8" title="1">{
+                return false
+        }</span>
+
+        <span class="cov8" title="1">samples := len(payload) / 2
+        if samples == 0 </span><span class="cov0" title="0">{
+                return false
+        }</span>
+
+        <span class="cov8" title="1">var (
+                sumSquares float64
+                maxDelta   int
+                prev       int16
+        )
+
+        for i := 0; i+1 &lt; len(payload); i += 2 </span><span class="cov8" title="1">{
+                sample := int16(binary.LittleEndian.Uint16(payload[i : i+2]))
+                sumSquares += float64(sample) * float64(sample)
+
+                delta := int(sample - prev)
+                if delta &lt; 0 </span><span class="cov8" title="1">{
+                        delta = -delta
+                }</span>
+                <span class="cov8" title="1">if delta &gt; maxDelta </span><span class="cov8" title="1">{
+                        maxDelta = delta
+                }</span>
+                <span class="cov8" title="1">prev = sample</span>
+        }
+
+        <span class="cov8" title="1">rms := math.Sqrt(sumSquares / float64(samples))
+        return rms &gt; 300 || maxDelta &gt; 250</span>
+}
 </pre>
 		
 		</div>

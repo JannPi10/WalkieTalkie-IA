@@ -13,11 +13,17 @@ import (
 )
 
 func main() {
+	if err := run(http.ListenAndServe, config.ConnectDB); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func run(listen func(string, http.Handler) error, connectDB func()) error {
 	_ = godotenv.Load(".env")
 
-	addr, handler := buildServer(os.Getenv, config.ConnectDB, httproutes.Routes)
+	addr, handler := buildServer(os.Getenv, connectDB, httproutes.Routes)
 	log.Println("Server running at http://localhost" + addr)
-	log.Fatal(http.ListenAndServe(addr, handler))
+	return listen(addr, handler)
 }
 
 func buildServer(

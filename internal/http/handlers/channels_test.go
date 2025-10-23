@@ -99,6 +99,27 @@ func TestListPublicChannels_Success(t *testing.T) {
 	}
 }
 
+func TestListPublicChannels_DBError(t *testing.T) {
+	oldDB := config.DB
+	defer func() { config.DB = oldDB }()
+
+	// Set DB to a new instance without migrations to simulate error
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	config.DB = db
+
+	req := httptest.NewRequest(http.MethodGet, "/channels/public", nil)
+	resp := httptest.NewRecorder()
+
+	ListPublicChannels(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, resp.Code)
+	}
+}
+
 func TestChannelUsers_MissingChannel(t *testing.T) {
 	cleanup := setupChannelsTestDB(t)
 	defer cleanup()

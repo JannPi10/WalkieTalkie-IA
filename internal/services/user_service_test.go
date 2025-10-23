@@ -354,6 +354,20 @@ func TestUserServiceGetUserWithChannel(t *testing.T) {
 	}
 }
 
+func TestUserServiceGetUserWithChannel_UserNotFound(t *testing.T) {
+	cleanup := setupUserServiceTestDB(t)
+	defer cleanup()
+
+	service := NewUserService()
+	_, err := service.GetUserWithChannel(99999)
+	if err == nil {
+		t.Error("expected error for non-existent user")
+	}
+	if !strings.Contains(err.Error(), "usuario no encontrado") {
+		t.Errorf("expected error to contain 'usuario no encontrado', got %s", err.Error())
+	}
+}
+
 func TestUserServiceGetChannelActiveUsers(t *testing.T) {
 	cleanup := setupUserServiceTestDB(t)
 	defer cleanup()
@@ -446,5 +460,23 @@ func TestUserServiceGetAvailableChannels(t *testing.T) {
 		if !found {
 			t.Errorf("expected to find channel %s", code)
 		}
+	}
+}
+
+func TestUserServiceGetAvailableChannels_DBError(t *testing.T) {
+	oldDB := config.DB
+	defer func() { config.DB = oldDB }()
+
+	// Set DB to a new instance without migrations to simulate error
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("failed to open test db: %v", err)
+	}
+	config.DB = db
+
+	service := NewUserService()
+	_, err = service.GetAvailableChannels()
+	if err == nil {
+		t.Error("expected error from DB")
 	}
 }
