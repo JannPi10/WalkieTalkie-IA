@@ -1,5 +1,7 @@
 FROM golang:1.24.5-bullseye
 
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY go.mod go.sum ./
@@ -9,6 +11,8 @@ COPY . .
 
 RUN go build -o main ./cmd/server
 
+RUN chmod +x scripts/verify-models.sh
+
 EXPOSE 8080
 
-CMD ["./main"]
+CMD ["sh", "-c", "./scripts/verify-models.sh && ./main"]
