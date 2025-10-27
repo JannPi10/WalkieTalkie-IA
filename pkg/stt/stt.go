@@ -1,3 +1,4 @@
+// pkg/stt/stt.go
 package stt
 
 import (
@@ -6,18 +7,15 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"mime/multipart"
-	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
-	"time"
 )
 
 type Client struct {
-	httpClient *http.Client
-	baseURL    string
+	scriptPath string
 }
 
 type transcriptionResponse struct {
@@ -25,14 +23,22 @@ type transcriptionResponse struct {
 }
 
 func NewClient() (*Client, error) {
-	baseURL := strings.TrimSpace(os.Getenv("STT_API_URL"))
-	if baseURL == "" {
-		return nil, fmt.Errorf("STT_API_URL no configurada")
+	scriptPath := strings.TrimSpace(os.Getenv("ASSEMBLYAI_SCRIPT_PATH"))
+	if scriptPath == "" {
+		scriptPath = "scripts/assemblyai_transcribe.py"
 	}
-	return &Client{
-		httpClient: &http.Client{Timeout: 60 * time.Second},
-		baseURL:    baseURL,
-	}, nil
+
+	if !filepath.IsAbs(scriptPath) {
+		if wd, err := os.Getwd(); err == nil {
+			scriptPath = filepath.Join(wd, scriptPath)
+		}
+	}
+
+	if _, err := os.Stat(scriptPath); err != nil {
+		return nil, fmt.Errorf("no se encontró el script STT en %s: %w", scriptPath, err)
+	}
+
+	return &Client{scriptPath: scriptPath}, nil
 }
 
 func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string, error) {
@@ -40,46 +46,23 @@ func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string,
 		return "", fmt.Errorf("audio vacío")
 	}
 
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
+	cmd := exec.CommandContext(ctx, "python3", c.scriptPath)
+	cmd.Stdin = bytes.NewReader(audioData)
 
-	filePart, err := writer.CreateFormFile("file", "audio.wav")
-	if err != nil {
-		return "", fmt.Errorf("crear form file: %w", err)
-	}
-	if _, err := filePart.Write(audioData); err != nil {
-		return "", fmt.Errorf("escribir audio: %w", err)
-	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 
-	if err := writer.WriteField("model", "Systran/faster-whisper-small"); err != nil {
-		return "", fmt.Errorf("añadir modelo: %w", err)
-	}
-	if err := writer.WriteField("language", "es"); err != nil {
-		return "", fmt.Errorf("añadir idioma: %w", err)
-	}
-	writer.Close()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, &buf)
-	if err != nil {
-		return "", fmt.Errorf("crear request: %w", err)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("ejecutar request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("STT error %d: %s", resp.StatusCode, string(body))
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("assemblyai: %w - %s", err, strings.TrimSpace(stderr.String()))
 	}
 
 	var decoded transcriptionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
 		return "", fmt.Errorf("decodificar respuesta: %w", err)
 	}
+
 	return strings.TrimSpace(decoded.Text), nil
 }
 

@@ -219,38 +219,32 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 
 // GET /audio/poll
 // Headers: X-Auth-Token: <token>
-// Endpoint para que los clientes obtengan audio pendiente mediante polling
 func AudioPoll(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Leer userId desde token
 	userID, ok := readUserIDHeader(r)
 	if !ok {
 		http.Error(w, "X-Auth-Token requerido", http.StatusUnauthorized)
 		return
 	}
 
-	// Verificar si hay audio pendiente
 	pendingAudio := DequeueAudio(userID)
 
 	if pendingAudio != nil {
-		// Devolver audio como WAV
 		log.Printf("Usuario %d recibe audio pendiente de usuario %d via polling", userID, pendingAudio.SenderID)
 
 		w.Header().Set("Content-Type", "audio/wav")
 		w.Header().Set("X-Audio-From", fmt.Sprintf("%d", pendingAudio.SenderID))
 		w.Header().Set("X-Channel", pendingAudio.Channel)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write(pendingAudio.AudioData)
-		if err != nil {
+		if _, err := w.Write(pendingAudio.AudioData); err != nil {
 			log.Printf("Error enviando audio a usuario %d: %v", userID, err)
 		}
 		return
 	}
 
-	// No hay audio pendiente
 	w.WriteHeader(http.StatusNoContent)
 }
