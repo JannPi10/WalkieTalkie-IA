@@ -85,7 +85,7 @@ services:
     build: .
     container_name: walkie_backend-IA
     ports:
-      - "80:8080"
+      - "8086:8080"
     env_file:
       - .env
     depends_on:

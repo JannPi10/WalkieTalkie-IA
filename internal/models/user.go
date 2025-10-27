@@ -9,6 +9,7 @@ import (
 type User struct {
 	gorm.Model
 	DisplayName      string   `gorm:"uniqueIndex;not null"`
+	Email            string   `gorm:"size:255"`
 	CurrentChannelID *uint    `gorm:"index"`
 	CurrentChannel   *Channel `gorm:"foreignKey:CurrentChannelID"`
 	IsActive         bool     `gorm:"default:true"`

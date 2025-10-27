@@ -54,6 +54,7 @@ func Authenticate(w http.ResponseWriter, r *http.Request) {
 		pinHash, _ := bcrypt.GenerateFromPassword([]byte(fmt.Sprintf("%d", req.Pin)), bcrypt.DefaultCost)
 		user = models.User{
 			DisplayName:  req.Nombre,
+			Email:        "",
 			IsActive:     true,
 			LastActiveAt: time.Now(),
 			PinHash:      string(pinHash),
