@@ -228,7 +228,7 @@ func moveClientToChannel(userID uint, newChannel string) {
 
 	client, ok := registry.byUser[userID]
 	if !ok {
-		log.Printf("Cliente no encontrado para mover: usuario=%d", userID)
+		log.Printf("Cliente encontrado para mover: usuario=%d", userID)
 		return
 	}
 

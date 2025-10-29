@@ -14,7 +14,7 @@ import (
 	"walkie-backend/internal/config"
 	"walkie-backend/internal/models"
 	"walkie-backend/internal/services"
-	"walkie-backend/pkg/deepseek"
+	"walkie-backend/pkg/qwen"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -144,7 +144,7 @@ func TestExecuteCommand_ChannelList(t *testing.T) {
 		createChannel(t, db, "canal-3")
 		user := createUser(t, db)
 
-		resp, err := executeCommand(user, svc, deepseek.CommandResult{Intent: "request_channel_list"})
+		resp, err := executeCommand(user, svc, qwen.CommandResult{Intent: "request_channel_list"})
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -158,7 +158,7 @@ func TestExecuteCommand_ChannelConnectMissingParam(t *testing.T) {
 	withTestDB(t, func(db *gorm.DB) {
 		svc := services.NewUserService()
 		user := createUser(t, db)
-		_, err := executeCommand(user, svc, deepseek.CommandResult{Intent: "request_channel_connect"})
+		_, err := executeCommand(user, svc, qwen.CommandResult{Intent: "request_channel_connect"})
 		if err == nil {
 			t.Fatalf("expected error when channel not provided")
 		}
@@ -179,7 +179,7 @@ func TestExecuteCommand_ChannelConnectSuccess(t *testing.T) {
 		}
 		defer func() { mockMoveClientToChannel = oldMove }()
 
-		resp, err := executeCommand(user, svc, deepseek.CommandResult{
+		resp, err := executeCommand(user, svc, qwen.CommandResult{
 			Intent:   "request_channel_connect",
 			Channels: []string{channel.Code},
 		})
@@ -227,7 +227,7 @@ func TestExecuteCommand_ChannelDisconnect(t *testing.T) {
 		}
 		defer func() { mockMoveClientToChannel = oldMove }()
 
-		resp, err := executeCommand(user, svc, deepseek.CommandResult{Intent: "request_channel_disconnect"})
+		resp, err := executeCommand(user, svc, qwen.CommandResult{Intent: "request_channel_disconnect"})
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}

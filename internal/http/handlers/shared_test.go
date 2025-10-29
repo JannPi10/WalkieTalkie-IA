@@ -18,11 +18,11 @@ func resetOnce(once *sync.Once, client interface{}, err interface{}) {
 }
 
 func TestEnsureDeepseekClient(t *testing.T) {
-	resetOnce(&onceDeepseek, &dsClient, &dsErr)
+	resetOnce(&onceAI, &aiClient, &aiErr)
 
-	client1, err1 := EnsureDeepseekClient()
+	client1, err1 := EnsureAIClient()
 
-	client2, err2 := EnsureDeepseekClient()
+	client2, err2 := EnsureAIClient()
 
 	if client1 != client2 {
 		t.Errorf("Expected same client, got different")

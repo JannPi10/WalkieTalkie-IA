@@ -1,4 +1,3 @@
-// pkg/stt/stt.go
 package stt
 
 import (
@@ -7,38 +6,46 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Client struct {
-	scriptPath string
+	apiKey     string
+	httpClient *http.Client
 }
 
-type transcriptionResponse struct {
-	Text string `json:"text"`
+type uploadResponse struct {
+	UploadURL string `json:"upload_url"`
+}
+
+type transcriptRequest struct {
+	AudioURL     string `json:"audio_url"`
+	SpeechModel  string `json:"speech_model"`
+	LanguageCode string `json:"language_code,omitempty"`
+}
+
+type transcriptResponse struct {
+	ID     string `json:"id"`
+	Status string `json:"status"`
+	Text   string `json:"text"`
+	Error  string `json:"error"`
 }
 
 func NewClient() (*Client, error) {
-	scriptPath := strings.TrimSpace(os.Getenv("ASSEMBLYAI_SCRIPT_PATH"))
-	if scriptPath == "" {
-		scriptPath = "scripts/assemblyai_transcribe.py"
+	apiKey := strings.TrimSpace(os.Getenv("ASSEMBLYAI_API_KEY"))
+	if apiKey == "" {
+		return nil, fmt.Errorf("ASSEMBLYAI_API_KEY no está configurada")
 	}
 
-	if !filepath.IsAbs(scriptPath) {
-		if wd, err := os.Getwd(); err == nil {
-			scriptPath = filepath.Join(wd, scriptPath)
-		}
-	}
-
-	if _, err := os.Stat(scriptPath); err != nil {
-		return nil, fmt.Errorf("no se encontró el script STT en %s: %w", scriptPath, err)
-	}
-
-	return &Client{scriptPath: scriptPath}, nil
+	return &Client{
+		apiKey:     apiKey,
+		httpClient: &http.Client{Timeout: 60 * time.Second},
+	}, nil
 }
 
 func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string, error) {
@@ -46,24 +53,132 @@ func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string,
 		return "", fmt.Errorf("audio vacío")
 	}
 
-	cmd := exec.CommandContext(ctx, "python3", c.scriptPath)
-	cmd.Stdin = bytes.NewReader(audioData)
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("assemblyai: %w - %s", err, strings.TrimSpace(stderr.String()))
+	uploadURL, err := c.uploadAudio(ctx, audioData)
+	if err != nil {
+		return "", fmt.Errorf("subir audio: %w", err)
 	}
 
-	var decoded transcriptionResponse
-	if err := json.Unmarshal(stdout.Bytes(), &decoded); err != nil {
-		return "", fmt.Errorf("decodificar respuesta: %w", err)
+	transcriptID, err := c.createTranscript(ctx, uploadURL)
+	if err != nil {
+		return "", fmt.Errorf("crear transcripción: %w", err)
 	}
 
-	return strings.TrimSpace(decoded.Text), nil
+	text, err := c.pollTranscript(ctx, transcriptID)
+	if err != nil {
+		return "", fmt.Errorf("obtener transcripción: %w", err)
+	}
+
+	return strings.TrimSpace(text), nil
+}
+
+func (c *Client) uploadAudio(ctx context.Context, audioData []byte) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.assemblyai.com/v2/upload", bytes.NewReader(audioData))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", c.apiKey)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var upload uploadResponse
+	if err := json.NewDecoder(resp.Body).Decode(&upload); err != nil {
+		return "", err
+	}
+
+	return upload.UploadURL, nil
+}
+
+func (c *Client) createTranscript(ctx context.Context, audioURL string) (string, error) {
+	reqBody := transcriptRequest{
+		AudioURL:     audioURL,
+		SpeechModel:  "universal",
+		LanguageCode: "es",
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.assemblyai.com/v2/transcript", bytes.NewReader(jsonData))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var transcript transcriptResponse
+	if err := json.NewDecoder(resp.Body).Decode(&transcript); err != nil {
+		return "", err
+	}
+
+	return transcript.ID, nil
+}
+
+func (c *Client) pollTranscript(ctx context.Context, transcriptID string) (string, error) {
+	url := fmt.Sprintf("https://api.assemblyai.com/v2/transcript/%s", transcriptID)
+
+	for {
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Authorization", c.apiKey)
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			return "", err
+		}
+
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return "", err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		}
+
+		var transcript transcriptResponse
+		if err := json.Unmarshal(body, &transcript); err != nil {
+			return "", err
+		}
+
+		switch transcript.Status {
+		case "completed":
+			return transcript.Text, nil
+		case "error":
+			return "", fmt.Errorf("transcripción fallida: %s", transcript.Error)
+		default:
+
+			select {
+			case <-time.After(3 * time.Second):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+	}
 }
 
 func (c *Client) IsHumanSpeech(audioData []byte) bool {

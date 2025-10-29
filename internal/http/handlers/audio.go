@@ -2,15 +2,15 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"walkie-backend/internal/models"
 	"walkie-backend/internal/services"
-	"walkie-backend/pkg/deepseek"
+	"walkie-backend/pkg/qwen"
 )
 
 type userService interface {
@@ -22,8 +22,8 @@ type sttClient interface {
 	TranscribeAudio(context.Context, []byte) (string, error)
 }
 
-type deepseekClient interface {
-	AnalyzeTranscript(context.Context, string, []string, string, string) (deepseek.CommandResult, error)
+type qwenClient interface {
+	AnalyzeTranscript(context.Context, string, []string, string, string) (qwen.CommandResult, error)
 }
 
 type audioIngestDeps struct {
@@ -33,10 +33,10 @@ type audioIngestDeps struct {
 	validateWAV        func([]byte) bool
 	newUserService     func() userService
 	ensureSTT          func() (sttClient, error)
-	ensureDeepseek     func() (deepseekClient, error)
+	ensureAI           func() (qwenClient, error)
 	isCoherent         func(string) bool
 	handleConversation func(http.ResponseWriter, *models.User, []byte)
-	executeCommand     func(*models.User, *services.UserService, deepseek.CommandResult) (string, error)
+	executeCommand     func(*models.User, *services.UserService, qwen.CommandResult) (CommandResponse, error)
 }
 
 func newAudioIngestDeps() audioIngestDeps {
@@ -51,16 +51,16 @@ func newAudioIngestDeps() audioIngestDeps {
 		ensureSTT: func() (sttClient, error) {
 			return EnsureSTTClient()
 		},
-		ensureDeepseek: func() (deepseekClient, error) {
-			return EnsureDeepseekClient()
+		ensureAI: func() (qwenClient, error) {
+			return EnsureAIClient()
 		},
 		isCoherent: isLikelyCoherent,
 		handleConversation: func(w http.ResponseWriter, user *models.User, audio []byte) {
 			handleAsConversation(w, user, audio)
 		},
-		executeCommand: func(user *models.User, svc *services.UserService, result deepseek.CommandResult) (string, error) {
+		executeCommand: func(user *models.User, svc *services.UserService, result qwen.CommandResult) (CommandResponse, error) {
 			if svc == nil {
-				return "", fmt.Errorf("servicio de usuarios no disponible")
+				return CommandResponse{}, fmt.Errorf("servicio de usuarios no disponible")
 			}
 			return executeCommand(user, svc, result)
 		},
@@ -130,18 +130,19 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 		if user.IsInChannel() {
 			log.Printf("Enviando audio sin transcripción para usuario %d (en canal)", userID)
 			deps.handleConversation(w, user, audioData)
-			return
+		} else {
+			writeUnintelligibleResponse(w)
 		}
-		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	text = strings.TrimSpace(text)
-	log.Printf("Texto transcrito de usuario %d: '%s'", userID, text)
-
 	if !deps.isCoherent(text) {
 		log.Printf("Texto no coherente de usuario %d, ignorando", userID)
-		w.WriteHeader(http.StatusNoContent)
+		if user.IsInChannel() {
+			w.WriteHeader(http.StatusNoContent)
+		} else {
+			writeUnintelligibleResponse(w)
+		}
 		return
 	}
 
@@ -152,13 +153,13 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 
 	log.Printf("Usuario %d en estado: %s", userID, currentState)
 
-	dsClient, err := deps.ensureDeepseek()
+	dsClient, err := deps.ensureAI()
 	if err != nil {
-		log.Printf("Deepseek no disponible para usuario %d: %v", userID, err)
+		log.Printf("IA no disponible para usuario %d: %v", userID, err)
 		if user.IsInChannel() {
 			deps.handleConversation(w, user, audioData)
 		} else {
-			w.WriteHeader(http.StatusNoContent)
+			writeUnintelligibleResponse(w)
 		}
 		return
 	}
@@ -169,7 +170,7 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 		if user.IsInChannel() {
 			deps.handleConversation(w, user, audioData)
 		} else {
-			w.WriteHeader(http.StatusNoContent)
+			writeUnintelligibleResponse(w)
 		}
 		return
 	}
@@ -186,7 +187,7 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 			log.Printf("Fallback: tratando como conversación para usuario %d", userID)
 			deps.handleConversation(w, user, audioData)
 		} else {
-			w.WriteHeader(http.StatusNoContent)
+			writeUnintelligibleResponse(w)
 		}
 		return
 	}
@@ -195,22 +196,23 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 
 	if result.IsCommand {
 		svcPtr, _ := userSvc.(*services.UserService)
-		response, execErr := deps.executeCommand(user, svcPtr, result)
+		cmdResponse, execErr := deps.executeCommand(user, svcPtr, result)
 		if execErr != nil {
 			log.Printf("Error ejecutando comando para usuario %d: %v", userID, execErr)
 			http.Error(w, execErr.Error(), http.StatusBadRequest)
 			return
 		}
 
-		log.Printf("Comando ejecutado para usuario %d, respuesta: %s", userID, response)
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte(response))
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		if err := json.NewEncoder(w).Encode(cmdResponse); err != nil {
+			log.Printf("Error enviando respuesta JSON a usuario %d: %v", userID, err)
+		}
 		return
 	}
 
 	if !user.IsInChannel() {
 		log.Printf("Usuario %d no está en canal, ignorando conversación", userID)
-		w.WriteHeader(http.StatusNoContent)
+		writeUnintelligibleResponse(w)
 		return
 	}
 
@@ -247,4 +249,13 @@ func AudioPoll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeUnintelligibleResponse(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(CommandResponse{
+		Status:  "ignored",
+		Intent:  "conversation",
+		Message: "audio poco comprensible",
+	})
 }

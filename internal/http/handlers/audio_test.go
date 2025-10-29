@@ -15,7 +15,7 @@ import (
 	"walkie-backend/internal/config"
 	"walkie-backend/internal/models"
 	"walkie-backend/internal/services"
-	"walkie-backend/pkg/deepseek"
+	"walkie-backend/pkg/qwen"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -150,8 +150,8 @@ func TestRunAudioIngest_DeepseekErrorWithoutChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
-			return nil, errors.New("deepseek down")
+		ensureAI: func() (qwenClient, error) {
+			return nil, errors.New("qwen down")
 		},
 		handleConversation: func(http.ResponseWriter, *models.User, []byte) {
 			t.Fatalf("conversation handler should not be called")
@@ -182,8 +182,8 @@ func TestRunAudioIngest_GetChannelsErrorWithoutChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
-			return &fakeDeepseek{result: deepseek.CommandResult{}}, nil
+		ensureAI: func() (qwenClient, error) {
+			return &fakeDeepseek{result: qwen.CommandResult{}}, nil
 		},
 		handleConversation: func(http.ResponseWriter, *models.User, []byte) {
 			t.Fatalf("conversation handler should not be called")
@@ -216,7 +216,7 @@ func TestRunAudioIngest_AnalyzeErrorWithoutChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
+		ensureAI: func() (qwenClient, error) {
 			return &fakeDeepseek{err: errors.New("analysis fail")}, nil
 		},
 		handleConversation: func(http.ResponseWriter, *models.User, []byte) {
@@ -249,9 +249,9 @@ func TestRunAudioIngest_CommandSuccess(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "tráeme la lista de canales"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
+		ensureAI: func() (qwenClient, error) {
 			return &fakeDeepseek{
-				result: deepseek.CommandResult{
+				result: qwen.CommandResult{
 					IsCommand: true,
 					Intent:    "request_channel_list",
 				},
@@ -260,7 +260,7 @@ func TestRunAudioIngest_CommandSuccess(t *testing.T) {
 		handleConversation: func(http.ResponseWriter, *models.User, []byte) {
 			t.Fatalf("conversation handler should not be called")
 		},
-		executeCommand: func(*models.User, *services.UserService, deepseek.CommandResult) (string, error) {
+		executeCommand: func(*models.User, *services.UserService, qwen.CommandResult) (string, error) {
 			return "ok", nil
 		},
 	}
@@ -292,13 +292,13 @@ func TestRunAudioIngest_NonCommandNoChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
-			return &fakeDeepseek{result: deepseek.CommandResult{IsCommand: false}}, nil
+		ensureAI: func() (qwenClient, error) {
+			return &fakeDeepseek{result: qwen.CommandResult{IsCommand: false}}, nil
 		},
 		handleConversation: func(http.ResponseWriter, *models.User, []byte) {
 			t.Fatalf("conversation handler should not be called")
 		},
-		executeCommand: func(*models.User, *services.UserService, deepseek.CommandResult) (string, error) {
+		executeCommand: func(*models.User, *services.UserService, qwen.CommandResult) (string, error) {
 			t.Fatalf("should not execute command")
 			return "", nil
 		},
@@ -336,14 +336,14 @@ func TestRunAudioIngest_ConversationFallbackInChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola equipo"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
-			return &fakeDeepseek{result: deepseek.CommandResult{IsCommand: false}}, nil
+		ensureAI: func() (qwenClient, error) {
+			return &fakeDeepseek{result: qwen.CommandResult{IsCommand: false}}, nil
 		},
 		handleConversation: func(w http.ResponseWriter, _ *models.User, _ []byte) {
 			conversationCalled = true
 			w.WriteHeader(http.StatusNoContent)
 		},
-		executeCommand: func(*models.User, *services.UserService, deepseek.CommandResult) (string, error) {
+		executeCommand: func(*models.User, *services.UserService, qwen.CommandResult) (string, error) {
 			t.Fatalf("command should not be executed")
 			return "", nil
 		},
@@ -458,11 +458,11 @@ func (f *fakeSTT) TranscribeAudio(context.Context, []byte) (string, error) {
 }
 
 type fakeDeepseek struct {
-	result deepseek.CommandResult
+	result qwen.CommandResult
 	err    error
 }
 
-func (f *fakeDeepseek) AnalyzeTranscript(context.Context, string, []string, string, string) (deepseek.CommandResult, error) {
+func (f *fakeDeepseek) AnalyzeTranscript(context.Context, string, []string, string, string) (qwen.CommandResult, error) {
 	return f.result, f.err
 }
 
@@ -606,7 +606,7 @@ func TestRunAudioIngest_DeepseekErrorWithChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
+		ensureAI: func() (qwenClient, error) {
 			return nil, errors.New("down")
 		},
 		handleConversation: func(w http.ResponseWriter, _ *models.User, _ []byte) {
@@ -649,8 +649,8 @@ func TestRunAudioIngest_GetChannelsErrorWithChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
-			return &fakeDeepseek{result: deepseek.CommandResult{}}, nil
+		ensureAI: func() (qwenClient, error) {
+			return &fakeDeepseek{result: qwen.CommandResult{}}, nil
 		},
 		handleConversation: func(w http.ResponseWriter, _ *models.User, _ []byte) {
 			called = true
@@ -692,7 +692,7 @@ func TestRunAudioIngest_AnalyzeErrorWithChannel(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "hola"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
+		ensureAI: func() (qwenClient, error) {
 			return &fakeDeepseek{err: errors.New("fail")}, nil
 		},
 		handleConversation: func(w http.ResponseWriter, _ *models.User, _ []byte) {
@@ -729,12 +729,12 @@ func TestRunAudioIngest_CommandExecError(t *testing.T) {
 		},
 		ensureSTT:  func() (sttClient, error) { return &fakeSTT{text: "tráeme la lista de canales"}, nil },
 		isCoherent: func(string) bool { return true },
-		ensureDeepseek: func() (deepseekClient, error) {
+		ensureAI: func() (qwenClient, error) {
 			return &fakeDeepseek{
-				result: deepseek.CommandResult{IsCommand: true, Intent: "request_channel_list"},
+				result: qwen.CommandResult{IsCommand: true, Intent: "request_channel_list"},
 			}, nil
 		},
-		executeCommand: func(*models.User, *services.UserService, deepseek.CommandResult) (string, error) {
+		executeCommand: func(*models.User, *services.UserService, qwen.CommandResult) (string, error) {
 			return "", errors.New("boom")
 		},
 	}
@@ -777,12 +777,12 @@ func TestNewAudioIngestDeps(t *testing.T) {
 		t.Error("newUserService should return non-nil")
 	}
 	_, _ = deps.ensureSTT()
-	_, _ = deps.ensureDeepseek()
+	_, _ = deps.ensureAI()
 	_ = deps.isCoherent("test")
 	if deps.handleConversation == nil {
 		t.Error("handleConversation should not be nil")
 	}
-	if _, err := deps.executeCommand(nil, nil, deepseek.CommandResult{}); err == nil {
+	if _, err := deps.executeCommand(nil, nil, qwen.CommandResult{}); err == nil {
 		t.Error("executeCommand should error with nil params")
 	}
 }

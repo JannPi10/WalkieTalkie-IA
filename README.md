@@ -24,8 +24,7 @@ Este proyecto implementa un servidor backend que procesa audio en tiempo real, l
 ## Tecnologías Usadas
 - **Go**: Lenguaje principal para el backend, con handlers HTTP y WebSockets.
 - **PostgreSQL**: Base de datos para usuarios y canales.
-- **Ollama**: Modelo de IA local (Qwen2.5:1.5b) para análisis de comandos.
-- **Speaches AI**: STT basado en Faster-Whisper para transcripción.
+- **Speaches AI**: STT basado en Assembly para transcripción.
 - **Gorilla WebSockets**: Para conexiones en tiempo real.
 - **GORM**: ORM para Go y PostgreSQL.
 - **Docker Compose**: Orquestación de contenedores.
@@ -33,7 +32,6 @@ Este proyecto implementa un servidor backend que procesa audio en tiempo real, l
 
 ## Requisitos
 - Docker y Docker Compose (versión 2.0+).
-- Al menos 8GB de RAM (para modelos de IA).
 - Puerto 80 disponible (o ajustar en docker-compose.yml).
 - Puerto 5432 para PostgreSQL (opcional, si expuesto).
 
@@ -49,8 +47,8 @@ Crea un archivo `.env` basado en `.env.example`:
 ```
 PORT=8080
 DATABASE_URL=postgres://tuUsuario:tuContraseña@db:5432/walkie_db?sslmode=disable
-DEEPSEEK_API_URL=http://deepseek:11434
-STT_API_URL=http://stt:8000/v1/audio/transcriptions
+AI_API_URL=http://tuModeloDeIA....
+ASSEMBLYAI_API_KEY=686877......
 ```
 
 ### 3. Construir y Ejecutar con Docker
@@ -59,8 +57,6 @@ docker-compose up --build
 ```
 Esto iniciará:
 - PostgreSQL (db)
-- Ollama con modelo Qwen (deepseek)
-- STT con Faster-Whisper (stt)
 - El backend de Go (app)
 
 El servidor estará disponible en `http://localhost:80`.

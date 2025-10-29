@@ -1,4 +1,4 @@
-package deepseek
+package qwen
 
 import (
 	"bytes"
@@ -15,15 +15,15 @@ import (
 )
 
 const (
-	defaultModel   = "qwen2.5:1.5b"
-	defaultBaseURL = "http://deepseek:11434"
+	defaultModel   = "alibaba-qwen3-32b"
+	defaultBaseURL = "https://inference.do-ai.run/v1"
 	systemPrompt   = `Eres un asistente de walkie-talkie. Tu ÚNICA función es detectar COMANDOS EXPLÍCITOS de sistema.
 
 REGLA #1: Detecta comandos aunque usen conjugaciones o variaciones cercanas (conéctame, desconéctame, salir del canal x, etc.).
 
 REGLAS GENERALES
 - Trabajamos con español latino. Acepta variaciones, conjugaciones, mayúsculas/minúsculas, tildes u ortografía aproximada.
-- Si percibes “parecería un comando” pero faltan datos esenciales (por ejemplo número de canal), márcalo como conversación.
+- Si percibes "parecería un comando" pero faltan datos esenciales (por ejemplo número de canal), márcalo como conversación.
 - Si hay múltiples peticiones, prioriza la más clara. En dudas, responde conversación.
 
 COMANDOS VÁLIDOS (SOLO ESTOS):
@@ -151,27 +151,31 @@ type message struct {
 }
 
 type chatRequest struct {
-	Model    string    `json:"model"`
-	Messages []message `json:"messages"`
-	Stream   bool      `json:"stream"`
+	Model     string    `json:"model"`
+	Messages  []message `json:"messages"`
+	MaxTokens int       `json:"max_tokens"`
 }
 
-type chatResponse struct {
+type choice struct {
 	Message message `json:"message"`
 }
 
-var ErrEmptyTranscript = errors.New("deepseek: transcripción vacía")
+type chatResponse struct {
+	Choices []choice `json:"choices"`
+}
+
+var ErrEmptyTranscript = errors.New("qwen: transcripción vacía")
 
 func NewClient() (*Client, error) {
-	baseURL := strings.TrimSpace(os.Getenv("DEEPSEEK_API_URL"))
+	baseURL := strings.TrimSpace(os.Getenv("AI_API_URL"))
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
-	model := strings.TrimSpace(os.Getenv("DEEPSEEK_MODEL"))
+	model := strings.TrimSpace(os.Getenv("AI_MODEL"))
 	if model == "" {
 		model = defaultModel
 	}
-	apiKey := strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
+	apiKey := strings.TrimSpace(os.Getenv("DO_AI_ACCESS_KEY"))
 
 	return &Client{
 		httpClient: &http.Client{Timeout: 180 * time.Second},
@@ -197,8 +201,8 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 	userPrompt := buildAnalysisPrompt(transcript, channels, currentState, pendingChannel)
 
 	reqBody := chatRequest{
-		Model:  c.model,
-		Stream: false,
+		Model:     c.model,
+		MaxTokens: 1000,
 		Messages: []message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
@@ -207,13 +211,13 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return fallback, fmt.Errorf("deepseek: serialize request: %w", err)
+		return fallback, fmt.Errorf("qwen: serialize request: %w", err)
 	}
 
-	url := fmt.Sprintf("%s/api/chat", c.baseURL)
+	url := fmt.Sprintf("%s/chat/completions", c.baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return fallback, fmt.Errorf("deepseek: new request: %w", err)
+		return fallback, fmt.Errorf("qwen: new request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.apiKey != "" {
@@ -222,23 +226,27 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fallback, fmt.Errorf("deepseek: request error: %w", err)
+		return fallback, fmt.Errorf("qwen: request error: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fallback, fmt.Errorf("deepseek: status %d: %s", resp.StatusCode, string(body))
+		return fallback, fmt.Errorf("qwen: status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var decoded chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return fallback, fmt.Errorf("deepseek: parse response: %w", err)
+		return fallback, fmt.Errorf("qwen: parse response: %w", err)
 	}
 
-	content := strings.TrimSpace(decoded.Message.Content)
+	if len(decoded.Choices) == 0 {
+		return fallback, errors.New("qwen: no choices in response")
+	}
+
+	content := strings.TrimSpace(decoded.Choices[0].Message.Content)
 	if content == "" {
-		return fallback, errors.New("deepseek: respuesta vacía")
+		return fallback, errors.New("qwen: respuesta vacía")
 	}
 
 	// Extraer JSON de respuesta markdown si es necesario
@@ -247,9 +255,9 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 	var result CommandResult
 	if err := json.Unmarshal([]byte(jsonContent), &result); err != nil {
 		// Log para debugging
-		log.Printf("DEBUG: Respuesta de Deepseek: %s", content)
+		log.Printf("DEBUG: Respuesta de Qwen: %s", content)
 		log.Printf("DEBUG: JSON extraído: %s", jsonContent)
-		return fallback, fmt.Errorf("deepseek: json inválido: %w", err)
+		return fallback, fmt.Errorf("qwen: json inválido: %w", err)
 	}
 
 	// Validación adicional: si el intent no es válido, forzar conversación

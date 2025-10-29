@@ -3,25 +3,25 @@ package handlers
 import (
 	"sync"
 
-	"walkie-backend/pkg/deepseek"
+	"walkie-backend/pkg/qwen"
 	"walkie-backend/pkg/stt"
 )
 
 var (
-	onceDeepseek sync.Once
-	dsClient     *deepseek.Client
-	dsErr        error
+	onceAI   sync.Once
+	aiClient *qwen.Client
+	aiErr    error
 
 	onceSTT sync.Once
 	sClient *stt.Client
 	sErr    error
 )
 
-func EnsureDeepseekClient() (*deepseek.Client, error) {
-	onceDeepseek.Do(func() {
-		dsClient, dsErr = deepseek.NewClient()
+func EnsureAIClient() (*qwen.Client, error) {
+	onceAI.Do(func() {
+		aiClient, aiErr = qwen.NewClient()
 	})
-	return dsClient, dsErr
+	return aiClient, aiErr
 }
 
 func EnsureSTTClient() (*stt.Client, error) {
