@@ -4,22 +4,20 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
-
-	"walkie-backend/internal/config"
-	"walkie-backend/internal/models"
 
 	"github.com/gorilla/websocket"
 )
 
 const (
-	// Límites de seguridad
-	maxAudioSize   = 10 * 1024 * 1024 // 10 MB
+	maxAudioSize   = 10 * 1024 * 1024
 	pingInterval   = 30 * time.Second
 	pongWait       = 60 * time.Second
 	writeWait      = 10 * time.Second
-	maxMessageSize = 15 * 1024 * 1024 // 15 MB
+	maxMessageSize = 15 * 1024 * 1024
 )
 
 type wsClient struct {
@@ -32,7 +30,7 @@ type wsClient struct {
 
 var (
 	upgrader = websocket.Upgrader{
-		CheckOrigin:     func(r *http.Request) bool { return true },
+		CheckOrigin:     checkWSOrigin,
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 	}
@@ -45,7 +43,54 @@ var (
 		byUser:    make(map[uint]*wsClient),
 		byChannel: make(map[string]map[uint]*wsClient),
 	}
+
+	allowedOriginsOnce sync.Once
+	allowedWSOrigins   []string
 )
+
+func checkWSOrigin(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+
+	for _, allowed := range getAllowedWSOrigins() {
+		if origin == allowed {
+			return true
+		}
+	}
+
+	host := strings.TrimSpace(r.Host)
+	if host == "" {
+		return false
+	}
+
+	if origin == "http://"+host || origin == "https://"+host {
+		return true
+	}
+
+	log.Printf("ws origen bloqueado: origin=%s host=%s", origin, host)
+	return false
+}
+
+func getAllowedWSOrigins() []string {
+	allowedOriginsOnce.Do(func() {
+		raw := os.Getenv("ALLOWED_WS_ORIGINS")
+		if raw == "" {
+			allowedWSOrigins = []string{}
+			return
+		}
+
+		parts := strings.Split(raw, ",")
+		allowedWSOrigins = make([]string, 0, len(parts))
+		for _, part := range parts {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				allowedWSOrigins = append(allowedWSOrigins, trimmed)
+			}
+		}
+	})
+	return allowedWSOrigins
+}
 
 func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -54,7 +99,6 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Configurar límites
 	conn.SetReadLimit(maxMessageSize)
 	conn.SetReadDeadline(time.Now().Add(pongWait))
 	conn.SetPongHandler(func(string) error {
@@ -80,20 +124,21 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	var handshake struct {
 		UserID  uint   `json:"userId"`
 		Channel string `json:"channel"`
+		Token   string `json:"token"`
 	}
-	if err := json.Unmarshal(raw, &handshake); err != nil || handshake.UserID == 0 {
+	if err := json.Unmarshal(raw, &handshake); err != nil || handshake.UserID == 0 || strings.TrimSpace(handshake.Token) == "" {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte("Handshake inválido"))
 		return
 	}
 
-	// Validar usuario
-	var user models.User
-	if err := config.DB.Preload("CurrentChannel").First(&user, handshake.UserID).Error; err != nil {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte("Usuario no encontrado"))
+	user, err := findUserByToken(handshake.Token)
+	if err != nil || user.ID != handshake.UserID {
+		_ = conn.WriteMessage(websocket.TextMessage, []byte("Sesión no autorizada"))
 		return
 	}
+	refreshUserActivity(user.ID)
 
-	channel := handshake.Channel
+	channel := strings.TrimSpace(handshake.Channel)
 	if channel == "" && user.CurrentChannel != nil {
 		channel = user.CurrentChannel.Code
 	}
@@ -113,83 +158,14 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"channel": channel,
 	})
 
-	// Iniciar goroutines para lectura y escritura
 	go client.writePump()
 	go client.readPump()
-}
-
-// readPump lee mensajes del WebSocket
-func (c *wsClient) readPump() {
-	defer func() {
-		removeClient(c)
-		c.conn.Close()
-	}()
-
-	c.conn.SetReadLimit(maxMessageSize)
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
-	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
-	})
-
-	for {
-		_, _, err := c.conn.ReadMessage()
-		if err != nil {
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("ws error user=%d: %v", c.userID, err)
-			}
-			break
-		}
-	}
-}
-
-// writePump envía mensajes al WebSocket
-func (c *wsClient) writePump() {
-	ticker := time.NewTicker(pingInterval)
-	defer func() {
-		ticker.Stop()
-		c.conn.Close()
-	}()
-
-	for {
-		select {
-		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-
-			w, err := c.conn.NextWriter(websocket.BinaryMessage)
-			if err != nil {
-				return
-			}
-			w.Write(message)
-
-			// Agregar mensajes en cola
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write(<-c.send)
-			}
-
-			if err := w.Close(); err != nil {
-				return
-			}
-
-		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				return
-			}
-		}
-	}
 }
 
 func registerClient(c *wsClient) {
 	registry.Lock()
 	defer registry.Unlock()
 
-	// Remover cliente anterior si existe
 	if oldClient, exists := registry.byUser[c.userID]; exists {
 		removeClientUnsafe(oldClient)
 	}
@@ -228,11 +204,10 @@ func moveClientToChannel(userID uint, newChannel string) {
 
 	client, ok := registry.byUser[userID]
 	if !ok {
-		log.Printf("Cliente encontrado para mover: usuario=%d", userID)
+		log.Printf("Cliente no encontrado para mover: usuario=%d", userID)
 		return
 	}
 
-	// Remover del canal anterior
 	if client.channel != "" && registry.byChannel[client.channel] != nil {
 		delete(registry.byChannel[client.channel], userID)
 		if len(registry.byChannel[client.channel]) == 0 {
@@ -240,15 +215,15 @@ func moveClientToChannel(userID uint, newChannel string) {
 		}
 	}
 
-	// Desconectar si no hay nuevo canal
 	if newChannel == "" {
 		delete(registry.byUser, userID)
 		client.channel = ""
+		notifyChannelChange(client, "")
+		closeWebSocket(client)
 		log.Printf("Cliente desconectado: usuario=%d", userID)
 		return
 	}
 
-	// Agregar al nuevo canal
 	client.channel = newChannel
 	if registry.byChannel[newChannel] == nil {
 		registry.byChannel[newChannel] = make(map[uint]*wsClient)
@@ -256,18 +231,99 @@ func moveClientToChannel(userID uint, newChannel string) {
 	registry.byChannel[newChannel][userID] = client
 
 	log.Printf("Cliente movido: usuario=%d, nuevo_canal=%s", userID, newChannel)
+	notifyChannelChange(client, newChannel)
+}
 
-	// Notificar al cliente del cambio
-	if client.conn != nil {
-		client.mu.Lock()
-		err := client.conn.WriteJSON(map[string]string{
-			"type":    "channel_changed",
-			"channel": newChannel,
-		})
-		client.mu.Unlock()
+func notifyChannelChange(c *wsClient, channel string) {
+	if c == nil || c.conn == nil {
+		return
+	}
 
+	payload := map[string]string{
+		"type":    "channel_changed",
+		"channel": channel,
+	}
+
+	c.mu.Lock()
+	err := c.conn.WriteJSON(payload)
+	c.mu.Unlock()
+
+	if err != nil {
+		log.Printf("Error notificando al usuario %d del cambio de canal: %v", c.userID, err)
+	}
+}
+
+func closeWebSocket(c *wsClient) {
+	if c == nil || c.conn == nil {
+		return
+	}
+	_ = c.conn.Close()
+}
+
+func (c *wsClient) readPump() {
+	defer func() {
+		removeClient(c)
+		c.conn.Close()
+	}()
+
+	c.conn.SetReadLimit(maxMessageSize)
+	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.conn.SetPongHandler(func(string) error {
+		c.conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	for {
+		_, _, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Printf("Error notificando al usuario %d del cambio de canal: %v", userID, err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("ws error user=%d: %v", c.userID, err)
+			}
+			break
+		}
+	}
+}
+
+func (c *wsClient) writePump() {
+	ticker := time.NewTicker(pingInterval)
+	defer func() {
+		ticker.Stop()
+		c.conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.send:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			w, err := c.conn.NextWriter(websocket.BinaryMessage)
+			if err != nil {
+				return
+			}
+			if _, err := w.Write(message); err != nil {
+				return
+			}
+
+			n := len(c.send)
+			for i := 0; i < n; i++ {
+				if _, err := w.Write(<-c.send); err != nil {
+					return
+				}
+			}
+
+			if err := w.Close(); err != nil {
+				return
+			}
+
+		case <-ticker.C:
+			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }

@@ -1,13 +1,10 @@
 package config
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"strings"
 	"sync"
-	"time"
-
 	"walkie-backend/internal/models"
 
 	"gorm.io/driver/postgres"
@@ -73,25 +70,6 @@ func seedDatabase(db *gorm.DB) {
 				log.Printf("Error seeding channel %s: %v", ch.Code, err)
 			} else {
 				log.Printf("Canal creado: %s", ch.Code)
-			}
-		}
-	}
-
-	for i := 1; i <= 10; i++ {
-		displayName := fmt.Sprintf("usuario-%02d", i)
-
-		var count int64
-		db.Model(&models.User{}).Where("display_name = ?", displayName).Count(&count)
-		if count == 0 {
-			user := models.User{
-				DisplayName:  displayName,
-				IsActive:     true,
-				LastActiveAt: time.Now(),
-			}
-			if err := db.Create(&user).Error; err != nil {
-				log.Printf("Error seeding user %s: %v", displayName, err)
-			} else {
-				log.Printf("Usuario creado: %s (ID: %d)", displayName, user.ID)
 			}
 		}
 	}

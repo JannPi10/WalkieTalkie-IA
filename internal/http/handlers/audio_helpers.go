@@ -1,20 +1,28 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
-	"walkie-backend/internal/config"
 
+	"walkie-backend/internal/config"
 	"walkie-backend/internal/models"
 	"walkie-backend/internal/services"
 	"walkie-backend/pkg/qwen"
+)
+
+var (
+	tokenTTLOnce sync.Once
+	tokenTTL     time.Duration
 )
 
 type AudioRelayResponse struct {
@@ -144,6 +152,8 @@ func handleChannelDisconnectCommand(user *models.User, userService *services.Use
 	}
 
 	moveClientToChannel(user.ID, "")
+	ClearPendingAudio(user.ID)
+
 	channelNum := strings.TrimPrefix(currentChannel, "canal-")
 
 	return CommandResponse{
@@ -194,32 +204,80 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 
 	EnqueueAudio(user.ID, channelCode, audioData, duration.Seconds(), recipients)
 
-	// El emisor no recibe su propio audio; solo se responde 204.
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // --------------------------- helpers ---------------------------
 
 func readUserIDHeader(r *http.Request) (uint, bool) {
-	authToken := r.Header.Get("X-Auth-Token")
-	if authToken == "" {
+	user, err := resolveUserFromRequest(r)
+	if err != nil {
 		return 0, false
 	}
-
-	// Buscar usuario por token
-	var user models.User
-	if err := config.DB.Where("auth_token = ?", authToken).First(&user).Error; err != nil {
-		return 0, false
-	}
-
 	return user.ID, true
+}
+
+func resolveUserFromRequest(r *http.Request) (*models.User, error) {
+	token := strings.TrimSpace(r.Header.Get("X-Auth-Token"))
+	user, err := findUserByToken(token)
+	if err != nil {
+		return nil, err
+	}
+	refreshUserActivity(user.ID)
+	return user, nil
+}
+
+func findUserByToken(token string) (*models.User, error) {
+	if token == "" {
+		return nil, errors.New("token vacío")
+	}
+
+	var user models.User
+	if err := config.DB.
+		Preload("CurrentChannel").
+		Where("auth_token = ?", token).
+		First(&user).Error; err != nil {
+		return nil, err
+	}
+
+	ttl := authTokenTTL()
+	if ttl > 0 && user.LastActiveAt.Add(ttl).Before(time.Now()) {
+		return nil, fmt.Errorf("token expirado")
+	}
+
+	return &user, nil
+}
+
+func refreshUserActivity(userID uint) {
+	if err := config.DB.Model(&models.User{}).
+		Where("id = ?", userID).
+		Update("last_active_at", time.Now()).Error; err != nil {
+		log.Printf("No se pudo actualizar last_active_at para usuario %d: %v", userID, err)
+	}
+}
+
+func authTokenTTL() time.Duration {
+	tokenTTLOnce.Do(func() {
+		value := strings.TrimSpace(os.Getenv("AUTH_TOKEN_TTL"))
+		if value == "" {
+			tokenTTL = 24 * time.Hour
+			return
+		}
+		duration, err := time.ParseDuration(value)
+		if err != nil {
+			log.Printf("AUTH_TOKEN_TTL inválido (%s), usando 24h: %v", value, err)
+			tokenTTL = 24 * time.Hour
+			return
+		}
+		tokenTTL = duration
+	})
+	return tokenTTL
 }
 
 func readAudioFromRequest(r *http.Request) ([]byte, error) {
 	ct := r.Header.Get("Content-Type")
 	mt, params, _ := mime.ParseMediaType(ct)
 
-	// multipart/form-data -> campo "file"
 	if strings.HasPrefix(mt, "multipart/") {
 		mr := multipart.NewReader(r.Body, params["boundary"])
 		part, err := mr.NextPart()
@@ -227,27 +285,23 @@ func readAudioFromRequest(r *http.Request) ([]byte, error) {
 			return nil, err
 		}
 		defer part.Close()
-		return io.ReadAll(io.LimitReader(part, 20<<20)) // 20 MB max
+		return io.ReadAll(io.LimitReader(part, 20<<20))
 	}
 
-	// raw audio/*
 	defer r.Body.Close()
 	return io.ReadAll(io.LimitReader(r.Body, 20<<20))
 }
 
-// isValidWAVFormat valida que el audio sea formato WAV válido
 func isValidWAVFormat(data []byte) bool {
 	if len(data) < 44 {
 		return false
 	}
-	// Verificar header RIFF y WAVE
 	return string(data[0:4]) == "RIFF" && string(data[8:12]) == "WAVE"
 }
 
 func isLikelyCoherent(s string) bool {
 	s = strings.TrimSpace(s)
 
-	// Aceptar frases muy cortas comunes
 	if len(s) <= 5 {
 		common := []string{"si", "sí", "no", "ok", "vale", "bien"}
 		lower := strings.ToLower(s)
@@ -284,22 +338,18 @@ func isLikelyCoherent(s string) bool {
 		}
 	}
 
-	// Criterios más flexibles
 	return letters >= 3 && vowels >= 1 && wordCount >= 1
 }
 
 func estimateAudioDuration(audioData []byte) time.Duration {
 	dataSize := len(audioData)
 
-	// Verificar y quitar header WAV
 	if dataSize > 44 && string(audioData[:4]) == "RIFF" && string(audioData[8:12]) == "WAVE" {
 		dataSize -= 44
 	}
 
-	// 16kHz * 2 bytes (16-bit) = 32000 bytes por segundo
 	seconds := float64(dataSize) / 32000.0
 
-	// Límites de seguridad
 	if seconds < 0.5 {
 		seconds = 0.5
 	}

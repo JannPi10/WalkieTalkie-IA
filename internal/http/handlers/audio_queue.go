@@ -42,7 +42,6 @@ func EnqueueAudio(senderID uint, channel string, audioData []byte, duration floa
 		Format:     "wav",
 	}
 
-	// Agregar audio a la cola de cada recipient
 	for _, recipientID := range recipients {
 		if recipientID == senderID {
 			continue
@@ -69,7 +68,6 @@ func DequeueAudio(userID uint) *PendingAudio {
 		return nil
 	}
 
-	// Obtener el primer audio (FIFO)
 	audio := queue[0]
 	globalAudioQueue.queues[userID] = queue[1:]
 
@@ -93,9 +91,15 @@ func cleanOldAudios() {
 		}
 		globalAudioQueue.queues[userID] = filtered
 
-		// Eliminar cola vacía
 		if len(filtered) == 0 {
 			delete(globalAudioQueue.queues, userID)
 		}
 	}
+}
+
+// ClearPendingAudio elimina la cola completa de un usuario
+func ClearPendingAudio(userID uint) {
+	globalAudioQueue.mu.Lock()
+	defer globalAudioQueue.mu.Unlock()
+	delete(globalAudioQueue.queues, userID)
 }
