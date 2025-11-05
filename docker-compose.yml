@@ -55,7 +55,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '2'
           memory: 4G
     security_opt:
       - no-new-privileges:true

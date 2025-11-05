@@ -71,7 +71,7 @@
 				
 				<option value="file7">walkie-backend/internal/httpHandler/handlers/shared.go (100.0%)</option>
 				
-				<option value="file8">walkie-backend/internal/httpHandler/handlers/ws.go (78.9%)</option>
+				<option value="file8">walkie-backend/internal/httpHandler/handlers/ws.go (77.0%)</option>
 				
 				<option value="file9">walkie-backend/internal/httpHandler/router.go (100.0%)</option>
 				
@@ -85,7 +85,7 @@
 				
 				<option value="file14">walkie-backend/internal/services/userService.go (89.8%)</option>
 				
-				<option value="file15">walkie-backend/pkg/qwen/Qwen.go (91.5%)</option>
+				<option value="file15">walkie-backend/pkg/qwen/Qwen.go (88.5%)</option>
 				
 				<option value="file16">walkie-backend/pkg/stt/stt.go (86.2%)</option>
 				
@@ -1646,7 +1646,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) <span class="cov8" 
         <span class="cov8" title="1">refreshUserActivity(user.ID)
 
         channel := strings.TrimSpace(handshake.Channel)
-        if channel == "" &amp;&amp; user.CurrentChannel != nil </span><span class="cov8" title="1">{
+        if channel == "" &amp;&amp; user.CurrentChannel != nil </span><span class="cov0" title="0">{
                 channel = user.CurrentChannel.Code
         }</span>
 
@@ -1666,14 +1666,14 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) <span class="cov8" 
         })
 
         go client.writePump()
-        go client.readPump()</span>
+        client.readPump()</span>
 }
 
 func registerClient(c *wsClient) <span class="cov8" title="1">{
         registry.Lock()
         defer registry.Unlock()
 
-        if oldClient, exists := registry.byUser[c.userID]; exists </span><span class="cov8" title="1">{
+        if oldClient, exists := registry.byUser[c.userID]; exists </span><span class="cov0" title="0">{
                 removeClientUnsafe(oldClient)
         }</span>
 
@@ -1885,7 +1885,7 @@ func stopTransmission(channel string, speakerID uint) <span class="cov8" title="
         defer registry.RUnlock()
 
         clients := registry.byChannel[channel]
-        if len(clients) == 0 </span><span class="cov8" title="1">{
+        if len(clients) == 0 </span><span class="cov0" title="0">{
                 log.Printf("No hay clientes WebSocket en canal %s para detener transmisión", channel)
                 return
         }</span>
@@ -2232,6 +2232,8 @@ func (s *UserService) GetAvailableChannels() ([]models.Channel, error) <span cla
 import (
         "bytes"
         "context"
+        "crypto/sha256"
+        "encoding/hex"
         "encoding/json"
         "errors"
         "fmt"
@@ -2241,7 +2243,13 @@ import (
         "os"
         "regexp"
         "strings"
+        "sync"
         "time"
+)
+
+var (
+        analysisCache = make(map[string]CommandResult)
+        cacheLock     = &amp;sync.RWMutex{}
 )
 
 const (
@@ -2444,7 +2452,26 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
                 return CommandResult{}, ErrEmptyTranscript
         }</span>
 
-        <span class="cov8" title="1">fallback := CommandResult{
+        // 1. Create cache key
+        <span class="cov8" title="1">keyBuilder := strings.Builder{}
+        keyBuilder.WriteString(transcript)
+        keyBuilder.WriteString(strings.Join(channels, ","))
+        keyBuilder.WriteString(currentState)
+        keyBuilder.WriteString(pendingChannel)
+        hash := sha256.Sum256([]byte(keyBuilder.String()))
+        cacheKey := hex.EncodeToString(hash[:])
+
+        // 2. Check cache
+        cacheLock.RLock()
+        result, found := analysisCache[cacheKey]
+        cacheLock.RUnlock()
+        if found </span><span class="cov8" title="1">{
+                log.Printf("INFO: Cache hit for transcript: '%s'", transcript)
+                return result, nil
+        }</span>
+        <span class="cov8" title="1">log.Printf("INFO: Cache miss for transcript: '%s'", transcript)
+
+        fallback := CommandResult{
                 IsCommand: false,
                 Intent:    "conversation",
                 Reply:     transcript,
@@ -2468,18 +2495,30 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
                 if err == nil </span><span class="cov8" title="1">{
                         if !result.IsCommand </span><span class="cov8" title="1">{
                                 if detected, ok := detectCommandFallback(transcript, channels, currentState); ok </span><span class="cov0" title="0">{
-                                        log.Printf("INFO: Qwen devolvió conversación, heurística local detectó comando intent=%s", detected.Intent)
+                                        log.Printf("INFO: Qwen returned conversation, local heuristic detected command intent=%s", detected.Intent)
+                                        // Cache the heuristic result as well
+                                        cacheLock.Lock()
+                                        analysisCache[cacheKey] = detected
+                                        cacheLock.Unlock()
                                         return detected, nil
                                 }</span>
                         }
-                        <span class="cov8" title="1">return result, nil</span>
+                        // 3. Store successful result in cache
+                        <span class="cov8" title="1">cacheLock.Lock()
+                        analysisCache[cacheKey] = result
+                        cacheLock.Unlock()
+                        return result, nil</span>
                 }
                 <span class="cov8" title="1">lastErr = err
                 time.Sleep(qwenRetryDelay)</span>
         }
 
         <span class="cov8" title="1">if detected, ok := detectCommandFallback(transcript, channels, currentState); ok </span><span class="cov8" title="1">{
-                log.Printf("WARN: Qwen falló tras %d intentos (%v). Usando heurística local intent=%s", qwenMaxAttempts, lastErr, detected.Intent)
+                log.Printf("WARN: Qwen failed after %d attempts (%v). Using local heuristic intent=%s", qwenMaxAttempts, lastErr, detected.Intent)
+                // Cache the fallback heuristic result
+                cacheLock.Lock()
+                analysisCache[cacheKey] = detected
+                cacheLock.Unlock()
                 return detected, nil
         }</span>
 
@@ -2505,7 +2544,7 @@ func (c *Client) callQwen(ctx context.Context, reqBody chatRequest, fallback Com
         }</span>
 
         <span class="cov8" title="1">resp, err := c.httpClient.Do(httpReq)
-        if err != nil </span><span class="cov8" title="1">{
+        if err != nil </span><span class="cov0" title="0">{
                 return fallback, fmt.Errorf("qwen: request error: %w", err)
         }</span>
         <span class="cov8" title="1">defer resp.Body.Close()
@@ -2534,7 +2573,7 @@ func (c *Client) callQwen(ctx context.Context, reqBody chatRequest, fallback Com
         <span class="cov8" title="1">jsonContent := extractJSONFromResponse(content)
 
         var result CommandResult
-        if err := json.Unmarshal([]byte(jsonContent), &amp;result); err != nil </span><span class="cov8" title="1">{
+        if err := json.Unmarshal([]byte(jsonContent), &amp;result); err != nil </span><span class="cov0" title="0">{
                 log.Printf("DEBUG: Respuesta de Qwen: %s", content)
                 log.Printf("DEBUG: JSON extraído: %s", jsonContent)
                 return fallback, fmt.Errorf("qwen: json inválido: %w", err)

@@ -375,6 +375,12 @@ func TestCheckWSOrigin(t *testing.T) {
 }
 
 func TestWebSocket_ReadPump_Close(t *testing.T) {
+	// Clean the registry before the test to prevent interference from parallel tests
+	registry.Lock()
+	registry.byUser = make(map[uint]*wsClient)
+	registry.byChannel = make(map[string]map[uint]*wsClient)
+	registry.Unlock()
+
 	db := setupTestDB(t)
 	user := createTestUser(t, db, 1, "token-123", "testchannel")
 
@@ -384,23 +390,33 @@ func TestWebSocket_ReadPump_Close(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(s.URL, "http")
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	assert.NoError(t, err)
+	defer conn.Close()
 
 	// Handshake
-	handshake := map[string]interface{}{"userId": user.ID, "token": user.AuthToken}
+	handshake := map[string]interface{}{
+		"userId":  user.ID,
+		"token":   user.AuthToken,
+		"channel": "testchannel",
+	}
 	handshakeBytes, _ := json.Marshal(handshake)
-	conn.WriteMessage(websocket.TextMessage, handshakeBytes)
-	conn.ReadMessage() // Read the "Conexión establecida" message
+	err = conn.WriteMessage(websocket.TextMessage, handshakeBytes)
+	assert.NoError(t, err)
 
-	// Check that client is registered
-	registry.RLock()
-	_, ok := registry.byUser[user.ID]
-	registry.RUnlock()
-	assert.True(t, ok, "client should be registered")
+	_, _, err = conn.ReadMessage() // Read the "Conexión establecida" message
+	assert.NoError(t, err)
 
-	// Close connection
+	// Use assert.Eventually to handle the small delay between the handler running and the test asserting
+	assert.Eventually(t, func() bool {
+		registry.RLock()
+		_, ok := registry.byUser[user.ID]
+		registry.RUnlock()
+		return ok
+	}, 100*time.Millisecond, 10*time.Millisecond, "client should be registered")
+
+	// Close connection from the client side
 	conn.Close()
 
-	// Wait a bit for readPump to process the close and unregister the client
+	// Assert that the server's readPump eventually removes the client
 	assert.Eventually(t, func() bool {
 		registry.RLock()
 		_, ok := registry.byUser[user.ID]
@@ -409,52 +425,120 @@ func TestWebSocket_ReadPump_Close(t *testing.T) {
 	}, 200*time.Millisecond, 20*time.Millisecond, "client should be unregistered after connection close")
 }
 
+
+
 func TestWebSocket_WritePump(t *testing.T) {
-	// 1. Setup server and client
+
+	// 1. Setup a server that reads messages and forwards them to a channel
+
+	serverReceivedMessages := make(chan []byte, 1)
+
+	serverConnectionClosed := make(chan struct{})
+
+
+
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
 		conn, err := upgrader.Upgrade(w, r, nil)
+
 		assert.NoError(t, err)
+
 		defer conn.Close()
 
-		// Just read messages to keep the connection alive
+		defer close(serverConnectionClosed)
+
+
+
 		for {
-			if _, _, err := conn.ReadMessage(); err != nil {
-				break
+
+			msgType, msg, err := conn.ReadMessage()
+
+			if err != nil {
+
+				return // Connection closed
+
 			}
+
+			if msgType == websocket.BinaryMessage {
+
+				serverReceivedMessages <- msg
+
+			}
+
 		}
+
 	}))
+
 	defer s.Close()
 
+
+
+	// 2. Act as a client connecting to the server
+
 	wsURL := "ws" + strings.TrimPrefix(s.URL, "http")
+
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+
 	assert.NoError(t, err)
-	defer conn.Close()
+
+
 
 	client := &wsClient{
+
 		conn:    conn,
+
 		userID:  1,
+
 		send:    make(chan []byte, 2),
+
 	}
 
-	// 2. Run writePump in a goroutine
+
+
+	// 3. Run writePump in a goroutine
+
 	go client.writePump()
 
-	// 3. Test sending a message
+
+
+	// 4. Test sending a message
+
 	testMessage := []byte("hello")
+
 	client.send <- testMessage
 
-	conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-	msgType, msg, err := conn.ReadMessage()
-	assert.NoError(t, err)
-	assert.Equal(t, websocket.BinaryMessage, msgType)
-	assert.Equal(t, testMessage, msg)
 
-	// 4. Test closing the send channel
+
+	select {
+
+	case received := <-serverReceivedMessages:
+
+		assert.Equal(t, testMessage, received)
+
+	case <-time.After(1 * time.Second):
+
+		t.Fatal("server did not receive message in time")
+
+	}
+
+
+
+	// 5. Test closing the send channel triggers a connection close
+
 	close(client.send)
 
-	// writePump should send a CloseMessage
-	conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-	_, _, err = conn.ReadMessage()
-	assert.Error(t, err)
-	assert.True(t, websocket.IsCloseError(err, websocket.CloseNormalClosure), "expected normal close error")
+
+
+	select {
+
+	case <-serverConnectionClosed:
+
+		// Success, the server connection was closed as expected
+
+	case <-time.After(1 * time.Second):
+
+		t.Fatal("server connection was not closed after send channel was closed")
+
+	}
+
 }

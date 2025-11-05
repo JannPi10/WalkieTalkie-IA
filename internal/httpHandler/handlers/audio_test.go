@@ -111,7 +111,7 @@ func TestRunAudioIngest_InvalidInput(t *testing.T) {
 	t.Run("invalid_wav_format", func(t *testing.T) {
 		deps := newAudioIngestDeps()
 		deps.readUserID = func(r *http.Request) (uint, error) { return 1, nil } // Usuario existe
-		deps.validateWAV = func(b []byte) bool { return false }                   // Falla la validación de WAV
+		deps.validateWAV = func(b []byte) bool { return false }                 // Falla la validación de WAV
 
 		req := httptest.NewRequest(http.MethodPost, "/audio/ingest", bytes.NewReader([]byte("not a wav")))
 		rec := httptest.NewRecorder()

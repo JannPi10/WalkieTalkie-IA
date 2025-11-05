@@ -159,7 +159,7 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	})
 
 	go client.writePump()
-	go client.readPump()
+	client.readPump()
 }
 
 func registerClient(c *wsClient) {

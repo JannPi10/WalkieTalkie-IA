@@ -312,7 +312,7 @@ func TestDetectCommandFallback(t *testing.T) {
 			availableChannels: []string{"canal-1", "canal-2"},
 			expectedIntent:    "request_channel_connect",
 			expectedChannel:   "canal-2",
-			expectedOK:         true,
+			expectedOK:        true,
 		},
 		{
 			name:              "connect with word number",
@@ -320,13 +320,13 @@ func TestDetectCommandFallback(t *testing.T) {
 			availableChannels: []string{"canal-1", "canal-2"},
 			expectedIntent:    "request_channel_connect",
 			expectedChannel:   "canal-2",
-			expectedOK:         true,
+			expectedOK:        true,
 		},
 		{
 			name:              "connect to unavailable channel",
 			transcript:        "conéctame al canal 99",
 			availableChannels: []string{"canal-1", "canal-2"},
-			expectedOK:         false, // Fails validation
+			expectedOK:        false, // Fails validation
 		},
 		{
 			name:       "no command",
@@ -334,9 +334,9 @@ func TestDetectCommandFallback(t *testing.T) {
 			expectedOK: false,
 		},
 		{
-			name:           "connect without number",
-			transcript:     "conéctame a un canal",
-			expectedOK:     false, // No channel number extracted
+			name:       "connect without number",
+			transcript: "conéctame a un canal",
+			expectedOK: false, // No channel number extracted
 		},
 	}
 

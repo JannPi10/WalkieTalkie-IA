@@ -3,6 +3,8 @@ package qwen
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +14,13 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+)
+
+var (
+	analysisCache = make(map[string]CommandResult)
+	cacheLock     = &sync.RWMutex{}
 )
 
 const (
@@ -215,6 +223,25 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 		return CommandResult{}, ErrEmptyTranscript
 	}
 
+	// 1. Create cache key
+	keyBuilder := strings.Builder{}
+	keyBuilder.WriteString(transcript)
+	keyBuilder.WriteString(strings.Join(channels, ","))
+	keyBuilder.WriteString(currentState)
+	keyBuilder.WriteString(pendingChannel)
+	hash := sha256.Sum256([]byte(keyBuilder.String()))
+	cacheKey := hex.EncodeToString(hash[:])
+
+	// 2. Check cache
+	cacheLock.RLock()
+	result, found := analysisCache[cacheKey]
+	cacheLock.RUnlock()
+	if found {
+		log.Printf("INFO: Se encontró un acierto de caché para la transcripción: '%s'", transcript)
+		return result, nil
+	}
+	log.Printf("INFO: Error de caché para transcripción: '%s'", transcript)
+
 	fallback := CommandResult{
 		IsCommand: false,
 		Intent:    "conversation",
@@ -240,9 +267,17 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 			if !result.IsCommand {
 				if detected, ok := detectCommandFallback(transcript, channels, currentState); ok {
 					log.Printf("INFO: Qwen devolvió conversación, heurística local detectó comando intent=%s", detected.Intent)
+					// Cache the heuristic result as well
+					cacheLock.Lock()
+					analysisCache[cacheKey] = detected
+					cacheLock.Unlock()
 					return detected, nil
 				}
 			}
+			// 3. Store successful result in cache
+			cacheLock.Lock()
+			analysisCache[cacheKey] = result
+			cacheLock.Unlock()
 			return result, nil
 		}
 		lastErr = err
@@ -251,6 +286,10 @@ func (c *Client) AnalyzeTranscript(ctx context.Context, transcript string, chann
 
 	if detected, ok := detectCommandFallback(transcript, channels, currentState); ok {
 		log.Printf("WARN: Qwen falló tras %d intentos (%v). Usando heurística local intent=%s", qwenMaxAttempts, lastErr, detected.Intent)
+		// Cache the fallback heuristic result
+		cacheLock.Lock()
+		analysisCache[cacheKey] = detected
+		cacheLock.Unlock()
 		return detected, nil
 	}
 
