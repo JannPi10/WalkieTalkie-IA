@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	httproutes "walkie-backend/internal/httpHandler"
 
 	"walkie-backend/internal/config"
-	httproutes "walkie-backend/internal/http"
 
 	"github.com/joho/godotenv"
 )

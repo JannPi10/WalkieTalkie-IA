@@ -16,10 +16,24 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nproc: 65535
+      nofile:
+        soft: 20000
+        hard: 40000
 
   app:
     build: .
     container_name: walkie-backend-IA
+    restart: unless-stopped
     ports:
       - "80:8080"
     env_file:
@@ -31,11 +45,34 @@ services:
       - PORT=8080
       - AI_API_URL=${AI_API_URL}
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+      - GIN_MODE=release
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+    security_opt:
+      - no-new-privileges:true
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
+    ulimits:
+      nofile:
+        soft: 20000
+        hard: 40000
 
 volumes:
   pgdata:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /var/lib/docker/volumes/backend-ia_pgdata/_data

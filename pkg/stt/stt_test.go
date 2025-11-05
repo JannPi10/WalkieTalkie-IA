@@ -1,193 +1,256 @@
 package stt
 
-//
-//import (
-//	"context"
-//	"net/http"
-//	"net/http/httptest"
-//	"testing"
-//)
-//
-//func TestNewClient(t *testing.T) {
-//	t.Setenv("STT_API_URL", "http://example.com")
-//	client, err := NewClient()
-//	if err != nil {
-//		t.Fatalf("NewClient() error = %v", err)
-//	}
-//	if client.baseURL != "http://example.com" {
-//		t.Errorf("expected baseURL 'http://example.com', got %s", client.baseURL)
-//	}
-//}
-//
-//func TestTranscribeAudio_Success(t *testing.T) {
-//	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//		if r.Method != "POST" {
-//			t.Errorf("expected POST, got %s", r.Method)
-//		}
-//		response := `{"text": "Hola, esto es una prueba de transcripción"}`
-//		w.Header().Set("Content-Type", "application/json")
-//		w.Write([]byte(response))
-//	}))
-//	defer server.Close()
-//
-//	client := &Client{
-//		baseURL:    server.URL,
-//		httpClient: &http.Client{},
-//	}
-//
-//	audioData := []byte("mock wav data")
-//	result, err := client.TranscribeAudio(context.Background(), audioData)
-//	if err != nil {
-//		t.Fatalf("TranscribeAudio() error = %v", err)
-//	}
-//
-//	expected := "Hola, esto es una prueba de transcripción"
-//	if result != expected {
-//		t.Errorf("expected %q, got %q", expected, result)
-//	}
-//}
-//
-//func TestTranscribeAudio_HTTPError(t *testing.T) {
-//	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//		w.WriteHeader(http.StatusInternalServerError)
-//		w.Write([]byte("Internal Server Error"))
-//	}))
-//	defer server.Close()
-//
-//	client := &Client{
-//		baseURL:    server.URL,
-//		httpClient: &http.Client{},
-//	}
-//
-//	_, err := client.TranscribeAudio(context.Background(), []byte("mock wav data"))
-//	if err == nil {
-//		t.Error("expected error, got none")
-//	}
-//}
-//
-//func TestTranscribeAudio_InvalidJSON(t *testing.T) {
-//	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//		w.Header().Set("Content-Type", "application/json")
-//		w.Write([]byte("invalid json"))
-//	}))
-//	defer server.Close()
-//
-//	client := &Client{
-//		baseURL:    server.URL,
-//		httpClient: &http.Client{},
-//	}
-//
-//	_, err := client.TranscribeAudio(context.Background(), []byte("mock wav data"))
-//	if err == nil {
-//		t.Error("expected error, got none")
-//	}
-//}
-//
-//func TestTranscribeAudio_EmptyAudio(t *testing.T) {
-//	client := &Client{
-//		baseURL:    "http://example.com",
-//		httpClient: &http.Client{},
-//	}
-//
-//	_, err := client.TranscribeAudio(context.Background(), []byte{})
-//	if err == nil {
-//		t.Error("expected error for empty audio")
-//	}
-//}
-//
-//func TestTranscribeAudio_NetworkError(t *testing.T) {
-//	client := &Client{
-//		baseURL:    "http://invalid-url",
-//		httpClient: &http.Client{},
-//	}
-//
-//	_, err := client.TranscribeAudio(context.Background(), []byte("mock wav data"))
-//	if err == nil {
-//		t.Error("expected network error")
-//	}
-//}
-//
-//func TestIsHumanSpeech(t *testing.T) {
-//	tests := []struct {
-//		name      string
-//		audioData []byte
-//		expected  bool
-//	}{
-//		{
-//			name:      "empty audio",
-//			audioData: []byte{},
-//			expected:  false,
-//		},
-//		{
-//			name:      "short audio",
-//			audioData: make([]byte, 1000),
-//			expected:  false,
-//		},
-//		{
-//			name:      "low amplitude audio",
-//			audioData: createLowAmplitudeAudio(3000),
-//			expected:  false,
-//		},
-//		{
-//			name:      "high amplitude audio",
-//			audioData: createHighAmplitudeAudio(3000),
-//			expected:  true,
-//		},
-//		{
-//			name:      "WAV header with low amplitude",
-//			audioData: append(wavHeader(), createLowAmplitudeAudio(3000)...),
-//			expected:  false,
-//		},
-//		{
-//			name:      "WAV header with high amplitude",
-//			audioData: append(wavHeader(), createHighAmplitudeAudio(3000)...),
-//			expected:  true,
-//		},
-//	}
-//
-//	for _, tt := range tests {
-//		t.Run(tt.name, func(t *testing.T) {
-//			client := &Client{}
-//			result := client.IsHumanSpeech(tt.audioData)
-//			if result != tt.expected {
-//				t.Errorf("IsHumanSpeech() = %v, expected %v", result, tt.expected)
-//			}
-//		})
-//	}
-//}
-//
-//func wavHeader() []byte {
-//	header := make([]byte, 44)
-//	copy(header[0:4], "RIFF")
-//	copy(header[8:12], "WAVE")
-//	copy(header[12:16], "fmt ")
-//	copy(header[16:20], []byte{16, 0, 0, 0})
-//	copy(header[20:22], []byte{1, 0})
-//	copy(header[22:24], []byte{128, 62})
-//	copy(header[24:28], []byte{128, 62, 0, 0})
-//	copy(header[28:30], []byte{2, 0})
-//	copy(header[30:32], []byte{16, 0})
-//	copy(header[32:36], "data")
-//	copy(header[36:40], []byte{0, 0, 0, 0})
-//	return header
-//}
-//
-//func createLowAmplitudeAudio(size int) []byte {
-//	data := make([]byte, size)
-//	for i := 0; i < len(data); i += 2 {
-//		sample := int16(50)
-//		data[i] = byte(sample & 0xff)
-//		data[i+1] = byte((sample >> 8) & 0xff)
-//	}
-//	return data
-//}
-//
-//func createHighAmplitudeAudio(size int) []byte {
-//	data := make([]byte, size)
-//	for i := 0; i < len(data); i += 2 {
-//		sample := int16(1000 + (i % 500))
-//		data[i] = byte(sample & 0xff)
-//		data[i+1] = byte((sample >> 8) & 0xff)
-//	}
-//	return data
-//}
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestNewClient(t *testing.T) {
+	t.Run("API key is set", func(t *testing.T) {
+		t.Setenv("ASSEMBLYAI_API_KEY", "test-api-key")
+		client, err := NewClient()
+		assert.NoError(t, err)
+		assert.NotNil(t, client)
+		assert.Equal(t, "test-api-key", client.apiKey)
+	})
+
+	t.Run("API key is not set", func(t *testing.T) {
+		t.Setenv("ASSEMBLYAI_API_KEY", "")
+		_, err := NewClient()
+		assert.Error(t, err)
+		assert.Equal(t, "ASSEMBLYAI_API_KEY no está configurada", err.Error())
+	})
+}
+
+// mockAssemblyAIServer creates a test server that simulates the AssemblyAI API flow.
+func mockAssemblyAIServer(t *testing.T, pollCountUntilComplete int, finalStatus string, finalError string) *httptest.Server {
+	var pollCounter int32
+	const transcriptID = "test-transcript-id"
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			http.Error(w, "Authorization header is required", http.StatusUnauthorized)
+			return
+		}
+
+		switch r.URL.Path {
+		case "/upload":
+			assert.Equal(t, http.MethodPost, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(uploadResponse{UploadURL: "https://cdn.assemblyai.com/upload/mock-upload-url"})
+		case "/transcript":
+			assert.Equal(t, http.MethodPost, r.Method)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(transcriptResponse{ID: transcriptID, Status: "queued"})
+		case fmt.Sprintf("/transcript/%s", transcriptID):
+			assert.Equal(t, http.MethodGet, r.Method)
+
+			currentPoll := atomic.AddInt32(&pollCounter, 1)
+			status := "processing"
+			if int(currentPoll) >= pollCountUntilComplete {
+				status = finalStatus
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(transcriptResponse{
+				ID:     transcriptID,
+				Status: status,
+				Text:   "This is a test transcript.",
+				Error:  finalError,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
+func TestTranscribeAudio_Success(t *testing.T) {
+	// Simulate a server that takes 2 polls to complete
+	server := mockAssemblyAIServer(t, 2, "completed", "")
+	defer server.Close()
+
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+
+	// Point the client to the mock server
+	client.baseURL = server.URL
+	client.httpClient = server.Client()
+
+	ctx := context.Background()
+	text, err := client.TranscribeAudio(ctx, []byte("test audio data"))
+
+	assert.NoError(t, err)
+	assert.Equal(t, "This is a test transcript.", text)
+}
+
+func TestTranscribeAudio_Failure(t *testing.T) {
+	// Simulate a server that fails immediately
+	server := mockAssemblyAIServer(t, 1, "error", "something went wrong")
+	defer server.Close()
+
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+
+	client.baseURL = server.URL
+	client.httpClient = server.Client()
+
+	_, err = client.TranscribeAudio(context.Background(), []byte("test audio data"))
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "transcripción fallida: something went wrong")
+}
+
+func TestTranscribeAudio_EmptyAudio(t *testing.T) {
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+
+	_, err = client.TranscribeAudio(context.Background(), []byte{})
+	assert.Error(t, err)
+	assert.Equal(t, "audio vacío", err.Error())
+}
+
+func TestIsHumanSpeech(t *testing.T) {
+	tests := []struct {
+		name      string
+		audioData []byte
+		expected  bool
+	}{
+		{"empty audio", []byte{}, false},
+		{"short audio", make([]byte, 1999), false},
+		{"low amplitude", createSineWave(4000, 100), false},
+		{"high amplitude", createSineWave(4000, 500), true},
+		{"high delta", createSquareWave(4000, 1000), true},
+		{"wav header and high amplitude", append(wavHeader(), createSineWave(4000, 600)...), true},
+		{"no samples", make([]byte, 1), false},
+	}
+
+	client := &Client{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, client.IsHumanSpeech(tt.audioData))
+		})
+	}
+}
+
+func TestTranscribeAudio_ContextCancellation(t *testing.T) {
+	server := mockAssemblyAIServer(t, 5, "completed", "") // Will never complete in time
+	defer server.Close()
+
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+
+	client.baseURL = server.URL
+	client.httpClient = server.Client()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err = client.TranscribeAudio(ctx, []byte("test audio data"))
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), context.DeadlineExceeded.Error())
+}
+
+func TestUploadAudio_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "upload failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+	client.baseURL = server.URL
+	client.httpClient = server.Client()
+
+	_, err = client.uploadAudio(context.Background(), []byte("audio"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 500: upload failed")
+}
+
+func TestCreateTranscript_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "transcript failed", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+	client.baseURL = server.URL
+	client.httpClient = server.Client()
+
+	_, err = client.createTranscript(context.Background(), "audio-url")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "HTTP 500: transcript failed")
+}
+
+// Helper functions for generating test audio data
+
+func wavHeader() []byte {
+	// Creates a minimal 44-byte WAV header.
+	header := make([]byte, 44)
+	copy(header[0:4], "RIFF")
+	copy(header[8:12], "WAVE")
+	return header
+}
+
+func createSineWave(size int, amplitude int16) []byte {
+	data := make([]byte, size)
+	for i := 0; i < len(data); i += 2 {
+		// Simple sine wave generation is complex, so we'll just use a fixed value for simplicity
+		// to control the RMS and delta.
+		sample := amplitude
+		if (i/2)%2 == 0 {
+			sample = -amplitude
+		}
+		data[i] = byte(sample & 0xff)
+		data[i+1] = byte((sample >> 8) & 0xff)
+	}
+	return data
+}
+
+func createSquareWave(size int, amplitude int16) []byte {
+	data := make([]byte, size)
+	for i := 0; i < len(data); i += 2 {
+		sample := amplitude
+		if (i/500)%2 == 0 {
+			sample = -amplitude
+		}
+		data[i] = byte(sample & 0xff)
+		data[i+1] = byte((sample >> 8) & 0xff)
+	}
+	return data
+}
+
+func TestTranscribeAudio_Timeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	t.Setenv("ASSEMBLYAI_API_KEY", "test-key")
+	client, err := NewClient()
+	assert.NoError(t, err)
+
+	client.baseURL = server.URL
+	client.httpClient.Timeout = 10 * time.Millisecond
+
+	_, err = client.TranscribeAudio(context.Background(), []byte("some audio data"))
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "context deadline exceeded")
+}

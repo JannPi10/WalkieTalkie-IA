@@ -1,9 +1,9 @@
-package http
+package httphandler
 
 import (
 	"net/http"
 
-	"walkie-backend/internal/http/handlers"
+	"walkie-backend/internal/httpHandler/handlers"
 )
 
 func Routes(mux *http.ServeMux) {

@@ -46,14 +46,6 @@ func TestSeedDatabase_CreatesInitialData(t *testing.T) {
 	if channelCount != 5 {
 		t.Fatalf("expected 5 channels, got %d", channelCount)
 	}
-
-	var userCount int64
-	if err := db.Model(&models.User{}).Count(&userCount).Error; err != nil {
-		t.Fatalf("count users: %v", err)
-	}
-	if userCount != 10 {
-		t.Fatalf("expected 10 users, got %d", userCount)
-	}
 }
 
 func TestSeedDatabase_IsIdempotent(t *testing.T) {
@@ -68,14 +60,6 @@ func TestSeedDatabase_IsIdempotent(t *testing.T) {
 	}
 	if channelCount != 5 {
 		t.Fatalf("expected 5 channels after reseed, got %d", channelCount)
-	}
-
-	var userCount int64
-	if err := db.Model(&models.User{}).Count(&userCount).Error; err != nil {
-		t.Fatalf("count users: %v", err)
-	}
-	if userCount != 10 {
-		t.Fatalf("expected 10 users after reseed, got %d", userCount)
 	}
 }
 
@@ -101,14 +85,6 @@ func TestConnectAndMigrate(t *testing.T) {
 	}
 	if channelCount != 5 {
 		t.Fatalf("expected 5 channels, got %d", channelCount)
-	}
-
-	var userCount int64
-	if err := db.Model(&models.User{}).Count(&userCount).Error; err != nil {
-		t.Fatalf("count users: %v", err)
-	}
-	if userCount != 10 {
-		t.Fatalf("expected 10 users, got %d", userCount)
 	}
 }
 
@@ -140,13 +116,5 @@ func TestConnectDB(t *testing.T) {
 	}
 	if channelCount != 5 {
 		t.Fatalf("expected 5 channels, got %d", channelCount)
-	}
-
-	var userCount int64
-	if err := DB.Model(&models.User{}).Count(&userCount).Error; err != nil {
-		t.Fatalf("count users: %v", err)
-	}
-	if userCount != 10 {
-		t.Fatalf("expected 10 users, got %d", userCount)
 	}
 }

@@ -2,18 +2,20 @@ package qwen
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNewClient_DefaultsFromEnv(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_URL", "")
-	t.Setenv("DEEPSEEK_MODEL", "")
-	t.Setenv("DEEPSEEK_API_KEY", "")
+	t.Setenv("AI_API_URL", "")
+	t.Setenv("AI_MODEL", "")
+	t.Setenv("DO_AI_ACCESS_KEY", "")
 
 	client, err := NewClient()
 	if err != nil {
@@ -21,27 +23,58 @@ func TestNewClient_DefaultsFromEnv(t *testing.T) {
 	}
 
 	if client.baseURL != defaultBaseURL {
-		t.Fatalf("expected baseURL %s, got %s", defaultBaseURL, client.baseURL)
+		t.Errorf("expected baseURL %s, got %s", defaultBaseURL, client.baseURL)
 	}
 
 	if client.model != defaultModel {
-		t.Fatalf("expected model %s, got %s", defaultModel, client.model)
+		t.Errorf("expected model %s, got %s", defaultModel, client.model)
 	}
 
 	if client.apiKey != "" {
-		t.Fatalf("expected empty apiKey, got %s", client.apiKey)
+		t.Errorf("expected empty apiKey, got %s", client.apiKey)
+	}
+}
+
+func TestNewClient_EnvironmentOverrides(t *testing.T) {
+	t.Setenv("AI_API_URL", "https://override.example.com/")
+	t.Setenv("AI_MODEL", "custom-model")
+	t.Setenv("DO_AI_ACCESS_KEY", "secret")
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient returned error: %v", err)
+	}
+
+	if client.baseURL != "https://override.example.com" {
+		t.Errorf("expected trimmed baseURL, got %s", client.baseURL)
+	}
+	if client.model != "custom-model" {
+		t.Errorf("expected model custom-model, got %s", client.model)
+	}
+	if client.apiKey != "secret" {
+		t.Errorf("expected apiKey secret, got %s", client.apiKey)
 	}
 }
 
 func TestAnalyzeTranscript_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/chat" {
-			t.Fatalf("unexpected path %s", r.URL.Path)
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
 		}
-
-		resp := `{"message":{"role":"assistant","content":"{\"is_command\":true,\"intent\":\"request_channel_list\",\"reply\":\"\",\"channels\":[],\"state\":\"sin_canal\"}"}}`
+		resp := chatResponse{
+			Choices: []choice{
+				{
+					Message: message{
+						Role:    "assistant",
+						Content: `{"is_command":true,"intent":"request_channel_list","reply":"","channels":[],"state":"sin_canal"}`,
+					},
+				},
+			},
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(resp))
+		json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(server.Close)
 
@@ -58,19 +91,28 @@ func TestAnalyzeTranscript_Success(t *testing.T) {
 	}
 
 	if !result.IsCommand {
-		t.Fatalf("expected command")
+		t.Fatal("expected command")
 	}
 
 	if result.Intent != "request_channel_list" {
-		t.Fatalf("expected intent request_channel_list, got %s", result.Intent)
+		t.Errorf("expected intent request_channel_list, got %s", result.Intent)
 	}
 }
 
 func TestAnalyzeTranscript_MarkdownJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := "{\"message\":{\"role\":\"assistant\",\"content\":\"```json\\n{\\\"is_command\\\":false,\\\"intent\\\":\\\"conversation\\\",\\\"reply\\\":\\\"hola\\\",\\\"channels\\\":[],\\\"state\\\":\\\"canal-1\\\"}\\n```\"}}"
+		resp := chatResponse{
+			Choices: []choice{
+				{
+					Message: message{
+						Role:    "assistant",
+						Content: "```json\n{\"is_command\":false,\"intent\":\"conversation\",\"reply\":\"hola\",\"channels\":[],\"state\":\"canal-1\"}\n```",
+					},
+				},
+			},
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(resp))
+		json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(server.Close)
 
@@ -85,7 +127,7 @@ func TestAnalyzeTranscript_MarkdownJSON(t *testing.T) {
 		t.Fatalf("AnalyzeTranscript returned error: %v", err)
 	}
 	if result.Intent != "conversation" || result.IsCommand {
-		t.Fatalf("expected conversation fallback, got %+v", result)
+		t.Errorf("expected conversation fallback, got %+v", result)
 	}
 }
 
@@ -93,7 +135,7 @@ func TestAnalyzeTranscript_EmptyTranscript(t *testing.T) {
 	client := &Client{}
 	_, err := client.AnalyzeTranscript(context.Background(), "   ", nil, "state", "")
 	if err != ErrEmptyTranscript {
-		t.Fatalf("expected ErrEmptyTranscript, got %v", err)
+		t.Errorf("expected ErrEmptyTranscript, got %v", err)
 	}
 }
 
@@ -109,17 +151,30 @@ func TestAnalyzeTranscript_HTTPError(t *testing.T) {
 		model:      "test-model",
 	}
 
-	_, err := client.AnalyzeTranscript(context.Background(), "hola", nil, "state", "")
-	if err == nil || !strings.Contains(err.Error(), "status 500") {
-		t.Fatalf("expected status error, got %v", err)
+	// Use the fallback mechanism as the primary expectation
+	result, err := client.AnalyzeTranscript(context.Background(), "dame la lista de canales", nil, "state", "")
+	if err != nil {
+		t.Fatalf("AnalyzeTranscript should not return error on HTTP error with fallback, but got: %v", err)
+	}
+	if !result.IsCommand || result.Intent != "request_channel_list" {
+		t.Errorf("Expected fallback to detect command, but it didn't. Got: %+v", result)
 	}
 }
 
 func TestAnalyzeTranscript_InvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := `{"message":{"role":"assistant","content":"not-json"}}`
+		resp := chatResponse{
+			Choices: []choice{
+				{
+					Message: message{
+						Role:    "assistant",
+						Content: "not-json",
+					},
+				},
+			},
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(resp))
+		json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(server.Close)
 
@@ -129,17 +184,30 @@ func TestAnalyzeTranscript_InvalidJSON(t *testing.T) {
 		model:      "test-model",
 	}
 
-	_, err := client.AnalyzeTranscript(context.Background(), "hola", nil, "state", "")
-	if err == nil || !strings.Contains(err.Error(), "json inválido") {
-		t.Fatalf("expected json error, got %v", err)
+	// Expect fallback to kick in
+	result, err := client.AnalyzeTranscript(context.Background(), "dame la lista de canales", nil, "state", "")
+	if err != nil {
+		t.Fatalf("AnalyzeTranscript should not return error on invalid JSON with fallback, but got: %v", err)
+	}
+	if !result.IsCommand || result.Intent != "request_channel_list" {
+		t.Errorf("Expected fallback to detect command, but it didn't. Got: %+v", result)
 	}
 }
 
 func TestAnalyzeTranscript_InvalidIntent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := `{"message":{"role":"assistant","content":"{\"is_command\":true,\"intent\":\"foobar\",\"reply\":\"\",\"channels\":[],\"state\":\"sin_canal\"}"}}`
+		resp := chatResponse{
+			Choices: []choice{
+				{
+					Message: message{
+						Role:    "assistant",
+						Content: `{"is_command":true,"intent":"foobar","reply":"","channels":[],"state":"sin_canal"}`,
+					},
+				},
+			},
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(resp))
+		json.NewEncoder(w).Encode(resp)
 	}))
 	t.Cleanup(server.Close)
 
@@ -154,7 +222,7 @@ func TestAnalyzeTranscript_InvalidIntent(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result.IsCommand || result.Intent != "conversation" {
-		t.Fatalf("expected forced conversation, got %+v", result)
+		t.Errorf("expected forced conversation, got %+v", result)
 	}
 }
 
@@ -164,32 +232,16 @@ func TestExtractJSONFromResponse(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{
-			name:     "plain json",
-			input:    `{"a":1}`,
-			expected: `{"a":1}`,
-		},
-		{
-			name:     "markdown block",
-			input:    "```json\n{\n  \"a\": 1\n}\n```",
-			expected: "{\n  \"a\": 1\n}",
-		},
-		{
-			name:     "json in line",
-			input:    "respuesta:\n{\"a\":1}\nfinal",
-			expected: `{"a":1}`,
-		},
-		{
-			name:     "fallback to original",
-			input:    "no json here",
-			expected: "no json here",
-		},
+		{"plain json", `{"a":1}`, `{"a":1}`},
+		{"markdown block", "```json\n{\n  \"a\": 1\n}\n```", "{\n  \"a\": 1\n}"},
+		{"json in line", "respuesta:\n{\"a\":1}\nfinal", `{"a":1}`},
+		{"fallback to original", "no json here", "no json here"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := extractJSONFromResponse(tt.input); got != tt.expected {
-				t.Fatalf("expected %q, got %q", tt.expected, got)
+				t.Errorf("expected %q, got %q", tt.expected, got)
 			}
 		})
 	}
@@ -197,17 +249,17 @@ func TestExtractJSONFromResponse(t *testing.T) {
 
 func TestBuildAnalysisPrompt(t *testing.T) {
 	prompt := buildAnalysisPrompt("hola", []string{"canal-1", "canal-2"}, "sin_canal", "canal-3")
-	if !strings.Contains(prompt, "hola") {
-		t.Fatalf("prompt missing transcript")
+	if !strings.Contains(prompt, "\"hola\"") {
+		t.Error("prompt missing transcript")
 	}
-	if !strings.Contains(prompt, "canal-1, canal-2") {
-		t.Fatalf("prompt missing channels")
+	if !strings.Contains(prompt, "Canales disponibles: canal-1, canal-2") {
+		t.Error("prompt missing channels")
 	}
-	if !strings.Contains(prompt, "sin_canal") {
-		t.Fatalf("prompt missing state")
+	if !strings.Contains(prompt, "Estado actual: sin_canal") {
+		t.Error("prompt missing state")
 	}
-	if !strings.Contains(prompt, "canal pendiente: canal-3") && !strings.Contains(strings.ToLower(prompt), "canal pendiente") {
-		t.Fatalf("prompt missing pending channel")
+	if !strings.Contains(prompt, "Canal pendiente: canal-3") {
+		t.Error("prompt missing pending channel")
 	}
 }
 
@@ -223,33 +275,85 @@ func TestAnalyzeTranscript_Timeout(t *testing.T) {
 		model:      "test-model",
 	}
 
-	_, err := client.AnalyzeTranscript(context.Background(), "hola", nil, "state", "")
-	if err == nil || !strings.Contains(err.Error(), "request error") {
-		t.Fatalf("expected timeout error, got %v", err)
-	}
-}
-
-func TestNewClient_EnvironmentOverrides(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_URL", "https://override.example.com/")
-	t.Setenv("DEEPSEEK_MODEL", "custom-model")
-	t.Setenv("DEEPSEEK_API_KEY", "secret")
-
-	client, err := NewClient()
+	// Expect fallback to kick in after timeout
+	result, err := client.AnalyzeTranscript(context.Background(), "dame la lista de canales", nil, "state", "")
 	if err != nil {
-		t.Fatalf("NewClient returned error: %v", err)
+		t.Fatalf("AnalyzeTranscript should not return error on timeout with fallback, but got: %v", err)
 	}
-
-	if client.baseURL != "https://override.example.com" {
-		t.Fatalf("expected trimmed baseURL, got %s", client.baseURL)
-	}
-	if client.model != "custom-model" {
-		t.Fatalf("expected model custom-model, got %s", client.model)
-	}
-	if client.apiKey != "secret" {
-		t.Fatalf("expected apiKey secret, got %s", client.apiKey)
+	if !result.IsCommand || result.Intent != "request_channel_list" {
+		t.Errorf("Expected fallback to detect command after timeout, but it didn't. Got: %+v", result)
 	}
 }
 
-func TestMain(m *testing.M) {
-	os.Exit(m.Run())
+func TestDetectCommandFallback(t *testing.T) {
+	tests := []struct {
+		name              string
+		transcript        string
+		availableChannels []string
+		expectedIntent    string
+		expectedChannel   string
+		expectedOK        bool
+	}{
+		{
+			name:           "list channels",
+			transcript:     "dame la lista de canales",
+			expectedIntent: "request_channel_list",
+			expectedOK:     true,
+		},
+		{
+			name:           "disconnect",
+			transcript:     "desconéctame del canal",
+			expectedIntent: "request_channel_disconnect",
+			expectedOK:     true,
+		},
+		{
+			name:              "connect with number",
+			transcript:        "conéctame al canal 2",
+			availableChannels: []string{"canal-1", "canal-2"},
+			expectedIntent:    "request_channel_connect",
+			expectedChannel:   "canal-2",
+			expectedOK:         true,
+		},
+		{
+			name:              "connect with word number",
+			transcript:        "conéctame al canal dos",
+			availableChannels: []string{"canal-1", "canal-2"},
+			expectedIntent:    "request_channel_connect",
+			expectedChannel:   "canal-2",
+			expectedOK:         true,
+		},
+		{
+			name:              "connect to unavailable channel",
+			transcript:        "conéctame al canal 99",
+			availableChannels: []string{"canal-1", "canal-2"},
+			expectedOK:         false, // Fails validation
+		},
+		{
+			name:       "no command",
+			transcript: "hola que tal",
+			expectedOK: false,
+		},
+		{
+			name:           "connect without number",
+			transcript:     "conéctame a un canal",
+			expectedOK:     false, // No channel number extracted
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, ok := detectCommandFallback(tt.transcript, tt.availableChannels, "sin_canal")
+
+			assert.Equal(t, tt.expectedOK, ok)
+
+			if tt.expectedOK {
+				assert.True(t, result.IsCommand)
+				assert.Equal(t, tt.expectedIntent, result.Intent)
+				if tt.expectedChannel != "" {
+					assert.Len(t, result.Channels, 1)
+					assert.Equal(t, tt.expectedChannel, result.Channels[0])
+				}
+			}
+		})
+	}
 }

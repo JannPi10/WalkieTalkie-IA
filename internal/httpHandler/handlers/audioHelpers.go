@@ -209,12 +209,12 @@ func handleAsConversation(w http.ResponseWriter, user *models.User, audioData []
 
 // --------------------------- helpers ---------------------------
 
-func readUserIDHeader(r *http.Request) (uint, bool) {
+func readUserIDHeader(r *http.Request) (uint, error) {
 	user, err := resolveUserFromRequest(r)
 	if err != nil {
-		return 0, false
+		return 0, fmt.Errorf("usuario no encontrado: %w", err)
 	}
-	return user.ID, true
+	return user.ID, nil
 }
 
 func resolveUserFromRequest(r *http.Request) (*models.User, error) {

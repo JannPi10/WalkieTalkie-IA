@@ -173,3 +173,38 @@ func TestCleanOldAudios_AllOld(t *testing.T) {
 		t.Errorf("Queue should be deleted")
 	}
 }
+
+func TestClearPendingAudio(t *testing.T) {
+	// Limpiar la cola global
+	globalAudioQueue.mu.Lock()
+	globalAudioQueue.queues = make(map[uint][]*PendingAudio)
+	globalAudioQueue.mu.Unlock()
+
+	userID := uint(20)
+	audio := &PendingAudio{SenderID: 1, Channel: "ch1", AudioData: []byte("audio1")}
+
+	// Encolar audio
+	globalAudioQueue.mu.Lock()
+	globalAudioQueue.queues[userID] = []*PendingAudio{audio}
+	globalAudioQueue.mu.Unlock()
+
+	// Verificar que la cola no está vacía
+	globalAudioQueue.mu.RLock()
+	if len(globalAudioQueue.queues[userID]) != 1 {
+		globalAudioQueue.mu.RUnlock()
+		t.Fatalf("Expected queue to have 1 item, but it has %d", len(globalAudioQueue.queues[userID]))
+	}
+	globalAudioQueue.mu.RUnlock()
+
+	// Limpiar la cola
+	ClearPendingAudio(userID)
+
+	// Verificar que la cola está vacía/eliminada
+	globalAudioQueue.mu.RLock()
+	queue, exists := globalAudioQueue.queues[userID]
+	globalAudioQueue.mu.RUnlock()
+
+	if exists {
+		t.Errorf("Queue for user %d should have been deleted, but it exists with %d items.", userID, len(queue))
+	}
+}

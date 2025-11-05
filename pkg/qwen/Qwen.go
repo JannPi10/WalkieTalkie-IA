@@ -399,7 +399,7 @@ var (
 		"Á", "a", "É", "e", "Í", "i", "Ó", "o", "Ú", "u",
 	)
 	wordNumberMap = map[string]string{
-		"uno": "1", "un": "1", "primero": "1",
+		"uno": "1", "primero": "1",
 		"dos": "2", "segundo": "2",
 		"tres": "3", "tercero": "3",
 		"cuatro": "4", "cuarto": "4",

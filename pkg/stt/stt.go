@@ -17,6 +17,7 @@ import (
 type Client struct {
 	apiKey     string
 	httpClient *http.Client
+	baseURL    string
 }
 
 type uploadResponse struct {
@@ -45,6 +46,7 @@ func NewClient() (*Client, error) {
 	return &Client{
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 60 * time.Second},
+		baseURL:    "https://api.assemblyai.com/v2",
 	}, nil
 }
 
@@ -72,7 +74,7 @@ func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string,
 }
 
 func (c *Client) uploadAudio(ctx context.Context, audioData []byte) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.assemblyai.com/v2/upload", bytes.NewReader(audioData))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/upload", bytes.NewReader(audioData))
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +111,7 @@ func (c *Client) createTranscript(ctx context.Context, audioURL string) (string,
 		return "", err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.assemblyai.com/v2/transcript", bytes.NewReader(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/transcript", bytes.NewReader(jsonData))
 	if err != nil {
 		return "", err
 	}
@@ -136,7 +138,7 @@ func (c *Client) createTranscript(ctx context.Context, audioURL string) (string,
 }
 
 func (c *Client) pollTranscript(ctx context.Context, transcriptID string) (string, error) {
-	url := fmt.Sprintf("https://api.assemblyai.com/v2/transcript/%s", transcriptID)
+	url := fmt.Sprintf("%s/transcript/%s", c.baseURL, transcriptID)
 
 	for {
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)

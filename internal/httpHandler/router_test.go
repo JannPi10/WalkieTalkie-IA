@@ -1,4 +1,4 @@
-package http_test
+package httphandler
 
 import (
 	"net/http"
@@ -6,13 +6,12 @@ import (
 	"reflect"
 	"testing"
 
-	httproutes "walkie-backend/internal/http"
-	"walkie-backend/internal/http/handlers"
+	"walkie-backend/internal/httpHandler/handlers"
 )
 
 func TestRoutes_RegistersHandlers(t *testing.T) {
 	mux := http.NewServeMux()
-	httproutes.Routes(mux)
+	Routes(mux)
 
 	tests := []struct {
 		path    string
@@ -36,7 +35,7 @@ func TestRoutes_RegistersHandlers(t *testing.T) {
 
 		hf, ok := gotHandler.(http.HandlerFunc)
 		if !ok {
-			t.Fatalf("path %s: handler is %T, expected http.HandlerFunc", tc.path, gotHandler)
+			t.Fatalf("path %s: handler is %T, expected httpHandler.HandlerFunc", tc.path, gotHandler)
 		}
 
 		if reflect.ValueOf(hf).Pointer() != reflect.ValueOf(tc.handler).Pointer() {

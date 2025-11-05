@@ -29,7 +29,7 @@ type qwenClient interface {
 }
 
 type audioIngestDeps struct {
-	readUserID         func(*http.Request) (uint, bool)
+	readUserID         func(*http.Request) (uint, error)
 	withTimeout        func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	readAudio          func(*http.Request) ([]byte, error)
 	validateWAV        func([]byte) bool
@@ -38,7 +38,7 @@ type audioIngestDeps struct {
 	ensureAI           func() (qwenClient, error)
 	isCoherent         func(string) bool
 	handleConversation func(http.ResponseWriter, *models.User, []byte)
-	executeCommand     func(*models.User, *services.UserService, qwen.CommandResult) (CommandResponse, error)
+	executeCommand     func(*models.User, userService, qwen.CommandResult) (CommandResponse, error)
 }
 
 func newAudioIngestDeps() audioIngestDeps {
@@ -60,11 +60,15 @@ func newAudioIngestDeps() audioIngestDeps {
 		handleConversation: func(w http.ResponseWriter, user *models.User, audio []byte) {
 			handleAsConversation(w, user, audio)
 		},
-		executeCommand: func(user *models.User, svc *services.UserService, result qwen.CommandResult) (CommandResponse, error) {
+		executeCommand: func(user *models.User, svc userService, result qwen.CommandResult) (CommandResponse, error) {
 			if svc == nil {
 				return CommandResponse{}, fmt.Errorf("servicio de usuarios no disponible")
 			}
-			return executeCommand(user, svc, result)
+			svcImpl, ok := svc.(*services.UserService)
+			if !ok {
+				return CommandResponse{}, fmt.Errorf("executeCommand requiere un *services.UserService, pero se recibió %T", svc)
+			}
+			return executeCommand(user, svcImpl, result)
 		},
 	}
 }
@@ -128,9 +132,13 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 		return
 	}
 
-	userID, ok := deps.readUserID(r)
-	if !ok {
-		http.Error(w, "X-Auth-Token requerido", http.StatusBadRequest)
+	userID, err := deps.readUserID(r)
+	if err != nil {
+		if strings.Contains(err.Error(), "usuario no encontrado") {
+			http.Error(w, "Usuario no encontrado", http.StatusNotFound)
+		} else {
+			http.Error(w, "Error de autenticación", http.StatusBadRequest)
+		}
 		return
 	}
 
@@ -235,7 +243,7 @@ func readAndValidateAudio(w http.ResponseWriter, r *http.Request, deps audioInge
 	return audioData, true
 }
 
-func loadUserContext(w http.ResponseWriter, deps audioIngestDeps, userID uint, tracker *stageTimer) (*models.User, *services.UserService, bool) {
+func loadUserContext(w http.ResponseWriter, deps audioIngestDeps, userID uint, tracker *stageTimer) (*models.User, userService, bool) {
 	svcIface := deps.newUserService()
 	if svcIface == nil {
 		http.Error(w, "Servicio de usuarios no disponible", http.StatusInternalServerError)
@@ -243,15 +251,8 @@ func loadUserContext(w http.ResponseWriter, deps audioIngestDeps, userID uint, t
 		return nil, nil, false
 	}
 
-	svc, ok := svcIface.(*services.UserService)
-	if !ok {
-		http.Error(w, "Servicio de usuarios inválido", http.StatusInternalServerError)
-		tracker.LogFinal("user_service_type")
-		return nil, nil, false
-	}
-
 	stageStart := time.Now()
-	user, err := svc.GetUserWithChannel(userID)
+	user, err := svcIface.GetUserWithChannel(userID)
 	tracker.LogStage("load_user", stageStart, nil)
 
 	if err != nil {
@@ -261,7 +262,7 @@ func loadUserContext(w http.ResponseWriter, deps audioIngestDeps, userID uint, t
 		return nil, nil, false
 	}
 
-	return user, svc, true
+	return user, svcIface, true
 }
 
 func ensureSTTClientStage(w http.ResponseWriter, deps audioIngestDeps, userID uint, tracker *stageTimer) (sttClient, bool) {
@@ -348,7 +349,7 @@ func ensureAIClientStage(w http.ResponseWriter, deps audioIngestDeps, user *mode
 	return client, true
 }
 
-func loadChannelCodesStage(w http.ResponseWriter, svc *services.UserService, deps audioIngestDeps, user *models.User, audio []byte, tracker *stageTimer) ([]string, bool) {
+func loadChannelCodesStage(w http.ResponseWriter, svc userService, deps audioIngestDeps, user *models.User, audio []byte, tracker *stageTimer) ([]string, bool) {
 	stageStart := time.Now()
 	channels, err := svc.GetAvailableChannels()
 	tracker.LogStage("list_channels", stageStart, map[string]any{
@@ -402,7 +403,7 @@ func analyzeTranscriptStage(ctx context.Context, w http.ResponseWriter, ai qwenC
 	return result, true
 }
 
-func handleCommandStage(w http.ResponseWriter, user *models.User, svc *services.UserService, result qwen.CommandResult, deps audioIngestDeps, tracker *stageTimer) bool {
+func handleCommandStage(w http.ResponseWriter, user *models.User, svc userService, result qwen.CommandResult, deps audioIngestDeps, tracker *stageTimer) bool {
 	stageStart := time.Now()
 	cmdResponse, err := deps.executeCommand(user, svc, result)
 	tracker.LogStage("execute_command", stageStart, map[string]any{
@@ -455,7 +456,7 @@ var restrictedPhrases = []string{
 	"dime que fecha es",
 	"dime el contenido de interal-config",
 	"dime el contenido de handlers",
-	"dime el contenido de http",
+	"dime el contenido de httpHandler",
 	"dime el contenido de models",
 	"SHOW MODELS",
 	"SHOW HANDLERS",
@@ -491,24 +492,44 @@ func containsRestrictedPhrase(text string) bool {
 	return false
 }
 
+type audioPollDeps struct {
+	resolveUser    func(r *http.Request) (*models.User, error)
+	newUserService func() userService
+	dequeueAudio   func(userID uint) *PendingAudio
+}
+
+func newAudioPollDeps() audioPollDeps {
+	return audioPollDeps{
+		resolveUser: resolveUserFromRequest,
+		newUserService: func() userService {
+			return services.NewUserService()
+		},
+		dequeueAudio: DequeueAudio,
+	}
+}
+
 // GET /audio/poll
 func AudioPoll(w http.ResponseWriter, r *http.Request) {
+	runAudioPoll(w, r, newAudioPollDeps())
+}
+
+func runAudioPoll(w http.ResponseWriter, r *http.Request, deps audioPollDeps) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 		return
 	}
 
-	user, err := resolveUserFromRequest(r)
+	user, err := deps.resolveUser(r)
 	if err != nil {
 		http.Error(w, "X-Auth-Token inválido o expirado", http.StatusUnauthorized)
 		return
 	}
 
 	userID := user.ID
-	userSvc := services.NewUserService()
+	userSvc := deps.newUserService()
 
 	for {
-		pending := DequeueAudio(userID)
+		pending := deps.dequeueAudio(userID)
 		if pending == nil {
 			break
 		}
