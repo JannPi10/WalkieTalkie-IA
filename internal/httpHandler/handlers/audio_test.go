@@ -44,11 +44,13 @@ func (m *mockUserService) GetAvailableChannels() ([]models.Channel, error) {
 
 // mockSTT es un mock para la interfaz sttClient.
 type mockSTT struct {
-	text string
-	err  error
+	text   string
+	err    error
+	format string
 }
 
-func (m *mockSTT) TranscribeAudio(ctx context.Context, audio []byte) (string, error) {
+func (m *mockSTT) TranscribeAudio(ctx context.Context, audio []byte, format string) (string, error) {
+	m.format = format
 	return m.text, m.err
 }
 
@@ -98,9 +100,10 @@ func TestRunAudioIngest_InvalidInput(t *testing.T) {
 			return &mockUserService{userErr: gorm.ErrRecordNotFound} // Mock de servicio que devuelve error
 		}
 
-		req := httptest.NewRequest(http.MethodPost, "/audio/ingest", bytes.NewReader([]byte("RIFF...WAVE..."))) // Audio válido para pasar la validación inicial
+		req := httptest.NewRequest(http.MethodPost, "/audio/ingest", bytes.NewReader([]byte("RIFF...WAVE...")))
+		req.Header.Set("Content-Type", "audio/wav") // Añadir Content-Type para evitar error de parseo
 		rec := httptest.NewRecorder()
-		deps.validateWAV = func(b []byte) bool { return true } // Forzar validación de WAV
+		deps.validateAudio = func(b []byte, format string) bool { return true } // Forzar validación de WAV
 		runAudioIngest(rec, req, deps)
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
@@ -111,9 +114,10 @@ func TestRunAudioIngest_InvalidInput(t *testing.T) {
 	t.Run("invalid_wav_format", func(t *testing.T) {
 		deps := newAudioIngestDeps()
 		deps.readUserID = func(r *http.Request) (uint, error) { return 1, nil } // Usuario existe
-		deps.validateWAV = func(b []byte) bool { return false }                 // Falla la validación de WAV
+		deps.validateAudio = func(b []byte, format string) bool { return false }                 // Falla la validación de WAV
 
 		req := httptest.NewRequest(http.MethodPost, "/audio/ingest", bytes.NewReader([]byte("not a wav")))
+		req.Header.Set("Content-Type", "audio/wav") // Añadir Content-Type para que validateAudio se ejecute
 		rec := httptest.NewRecorder()
 		runAudioIngest(rec, req, deps)
 
@@ -134,8 +138,8 @@ func TestRunAudioIngest_CommandFlow(t *testing.T) {
 	deps.ensureAI = func() (qwenClient, error) {
 		return &mockQwen{result: qwen.CommandResult{IsCommand: true, Intent: "request_channel_list"}}, nil
 	}
-	deps.validateWAV = func([]byte) bool { return true }
-	deps.readAudio = func(*http.Request) ([]byte, error) { return []byte("audio data"), nil }
+	deps.validateAudio = func([]byte, string) bool { return true }
+	deps.readAudio = func(*http.Request) ([]byte, string, error) { return []byte("audio data"), "audio/wav", nil }
 
 	// Mock para executeCommand para evitar la conversión de tipo
 	deps.executeCommand = func(user *models.User, svc userService, result qwen.CommandResult) (CommandResponse, error) {
@@ -151,6 +155,8 @@ func TestRunAudioIngest_CommandFlow(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	assert.Contains(t, rec.Body.String(), "Canales: 1, 2")
 }
+
+
 
 func TestAudioPoll_Unauthorized(t *testing.T) {
 	deps := newAudioPollDeps()

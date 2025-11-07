@@ -87,7 +87,7 @@ func TestTranscribeAudio_Success(t *testing.T) {
 	client.httpClient = server.Client()
 
 	ctx := context.Background()
-	text, err := client.TranscribeAudio(ctx, []byte("test audio data"))
+	text, err := client.TranscribeAudio(ctx, []byte("test audio data"), "audio/wav")
 
 	assert.NoError(t, err)
 	assert.Equal(t, "This is a test transcript.", text)
@@ -105,7 +105,7 @@ func TestTranscribeAudio_Failure(t *testing.T) {
 	client.baseURL = server.URL
 	client.httpClient = server.Client()
 
-	_, err = client.TranscribeAudio(context.Background(), []byte("test audio data"))
+	_, err = client.TranscribeAudio(context.Background(), []byte("test audio data"), "audio/wav")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "transcripción fallida: something went wrong")
@@ -116,7 +116,7 @@ func TestTranscribeAudio_EmptyAudio(t *testing.T) {
 	client, err := NewClient()
 	assert.NoError(t, err)
 
-	_, err = client.TranscribeAudio(context.Background(), []byte{})
+	_, err = client.TranscribeAudio(context.Background(), []byte{}, "audio/wav")
 	assert.Error(t, err)
 	assert.Equal(t, "audio vacío", err.Error())
 }
@@ -158,7 +158,7 @@ func TestTranscribeAudio_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err = client.TranscribeAudio(ctx, []byte("test audio data"))
+	_, err = client.TranscribeAudio(ctx, []byte("test audio data"), "audio/wav")
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), context.DeadlineExceeded.Error())
@@ -176,7 +176,7 @@ func TestUploadAudio_HTTPError(t *testing.T) {
 	client.baseURL = server.URL
 	client.httpClient = server.Client()
 
-	_, err = client.uploadAudio(context.Background(), []byte("audio"))
+	_, err = client.uploadAudio(context.Background(), []byte("audio"), "audio/wav")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "HTTP 500: upload failed")
 }
@@ -220,7 +220,7 @@ func createSineWave(size int, amplitude int16) []byte {
 		data[i] = byte(sample & 0xff)
 		data[i+1] = byte((sample >> 8) & 0xff)
 	}
-	return data
+	return append(wavHeader(), data...)
 }
 
 func createSquareWave(size int, amplitude int16) []byte {
@@ -233,7 +233,7 @@ func createSquareWave(size int, amplitude int16) []byte {
 		data[i] = byte(sample & 0xff)
 		data[i+1] = byte((sample >> 8) & 0xff)
 	}
-	return data
+	return append(wavHeader(), data...)
 }
 
 func TestTranscribeAudio_Timeout(t *testing.T) {
@@ -250,7 +250,7 @@ func TestTranscribeAudio_Timeout(t *testing.T) {
 	client.baseURL = server.URL
 	client.httpClient.Timeout = 10 * time.Millisecond
 
-	_, err = client.TranscribeAudio(context.Background(), []byte("some audio data"))
+	_, err = client.TranscribeAudio(context.Background(), []byte("some audio data"), "audio/wav")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "context deadline exceeded")
 }

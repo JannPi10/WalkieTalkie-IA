@@ -396,7 +396,8 @@ func TestReadAudioFromRequest(t *testing.T) {
 	t.Run("plain body", func(t *testing.T) {
 		body := "plain audio data"
 		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
-		audio, err := readAudioFromRequest(req)
+		req.Header.Set("Content-Type", "audio/wav")
+		audio, _, err := readAudioFromRequest(req)
 		assert.NoError(t, err)
 		assert.Equal(t, body, string(audio))
 	})
@@ -413,7 +414,7 @@ func TestReadAudioFromRequest(t *testing.T) {
 		req := httptest.NewRequest("POST", "/", body)
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 
-		audio, err := readAudioFromRequest(req)
+		audio, _, err := readAudioFromRequest(req)
 		assert.NoError(t, err)
 		assert.Equal(t, "multipart audio data", string(audio))
 	})

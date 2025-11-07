@@ -274,22 +274,28 @@ func authTokenTTL() time.Duration {
 	return tokenTTL
 }
 
-func readAudioFromRequest(r *http.Request) ([]byte, error) {
+func readAudioFromRequest(r *http.Request) ([]byte, string, error) {
 	ct := r.Header.Get("Content-Type")
-	mt, params, _ := mime.ParseMediaType(ct)
+	mt, params, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return nil, "", fmt.Errorf("error al parsear Content-Type: %w", err)
+	}
 
 	if strings.HasPrefix(mt, "multipart/") {
 		mr := multipart.NewReader(r.Body, params["boundary"])
 		part, err := mr.NextPart()
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		defer part.Close()
-		return io.ReadAll(io.LimitReader(part, 20<<20))
+
+		data, err := io.ReadAll(io.LimitReader(part, 20<<20))
+		return data, part.Header.Get("Content-Type"), err
 	}
 
 	defer r.Body.Close()
-	return io.ReadAll(io.LimitReader(r.Body, 20<<20))
+	data, err := io.ReadAll(io.LimitReader(r.Body, 20<<20))
+	return data, mt, err
 }
 
 func isValidWAVFormat(data []byte) bool {

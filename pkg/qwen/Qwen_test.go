@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -249,18 +248,11 @@ func TestExtractJSONFromResponse(t *testing.T) {
 
 func TestBuildAnalysisPrompt(t *testing.T) {
 	prompt := buildAnalysisPrompt("hola", []string{"canal-1", "canal-2"}, "sin_canal", "canal-3")
-	if !strings.Contains(prompt, "\"hola\"") {
-		t.Error("prompt missing transcript")
-	}
-	if !strings.Contains(prompt, "Canales disponibles: canal-1, canal-2") {
-		t.Error("prompt missing channels")
-	}
-	if !strings.Contains(prompt, "Estado actual: sin_canal") {
-		t.Error("prompt missing state")
-	}
-	if !strings.Contains(prompt, "Canal pendiente: canal-3") {
-		t.Error("prompt missing pending channel")
-	}
+
+	assert.Contains(t, prompt, "<user_input>\nhola\n</user_input>", "prompt missing transcript in correct tag")
+	assert.Contains(t, prompt, "<available_channels>canal-1, canal-2</available_channels>", "prompt missing channels in correct tag")
+	assert.Contains(t, prompt, "<state>sin_canal</state>", "prompt missing state in correct tag")
+	assert.Contains(t, prompt, "<pending_channel>canal-3</pending_channel>", "prompt missing pending channel in correct tag")
 }
 
 func TestAnalyzeTranscript_Timeout(t *testing.T) {

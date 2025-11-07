@@ -50,12 +50,12 @@ func NewClient() (*Client, error) {
 	}, nil
 }
 
-func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string, error) {
+func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte, format string) (string, error) {
 	if len(audioData) == 0 {
 		return "", fmt.Errorf("audio vacío")
 	}
 
-	uploadURL, err := c.uploadAudio(ctx, audioData)
+	uploadURL, err := c.uploadAudio(ctx, audioData, format)
 	if err != nil {
 		return "", fmt.Errorf("subir audio: %w", err)
 	}
@@ -73,12 +73,13 @@ func (c *Client) TranscribeAudio(ctx context.Context, audioData []byte) (string,
 	return strings.TrimSpace(text), nil
 }
 
-func (c *Client) uploadAudio(ctx context.Context, audioData []byte) (string, error) {
+func (c *Client) uploadAudio(ctx context.Context, audioData []byte, format string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/upload", bytes.NewReader(audioData))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Authorization", c.apiKey)
+	req.Header.Set("Content-Type", format)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -184,10 +185,11 @@ func (c *Client) pollTranscript(ctx context.Context, transcriptID string) (strin
 }
 
 func (c *Client) IsHumanSpeech(audioData []byte) bool {
-	payload := audioData
-	if len(payload) > 44 && string(payload[:4]) == "RIFF" && string(payload[8:12]) == "WAVE" {
-		payload = payload[44:]
+	if len(audioData) < 44 || string(audioData[:4]) != "RIFF" || string(audioData[8:12]) != "WAVE" {
+		return false
 	}
+
+	payload := audioData[44:]
 	if len(payload) < 2000 {
 		return false
 	}

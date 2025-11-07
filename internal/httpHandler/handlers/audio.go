@@ -21,7 +21,7 @@ type userService interface {
 }
 
 type sttClient interface {
-	TranscribeAudio(context.Context, []byte) (string, error)
+	TranscribeAudio(ctx context.Context, audioData []byte, format string) (string, error)
 }
 
 type qwenClient interface {
@@ -31,8 +31,8 @@ type qwenClient interface {
 type audioIngestDeps struct {
 	readUserID         func(*http.Request) (uint, error)
 	withTimeout        func(context.Context, time.Duration) (context.Context, context.CancelFunc)
-	readAudio          func(*http.Request) ([]byte, error)
-	validateWAV        func([]byte) bool
+	readAudio          func(*http.Request) ([]byte, string, error)
+	validateAudio      func(data []byte, format string) bool
 	newUserService     func() userService
 	ensureSTT          func() (sttClient, error)
 	ensureAI           func() (qwenClient, error)
@@ -43,10 +43,10 @@ type audioIngestDeps struct {
 
 func newAudioIngestDeps() audioIngestDeps {
 	return audioIngestDeps{
-		readUserID:  readUserIDHeader,
-		withTimeout: context.WithTimeout,
-		readAudio:   readAudioFromRequest,
-		validateWAV: isValidWAVFormat,
+		readUserID:    readUserIDHeader,
+		withTimeout:   context.WithTimeout,
+		readAudio:     readAudioFromRequest,
+		validateAudio: validateAudioFormat,
 		newUserService: func() userService {
 			return services.NewUserService()
 		},
@@ -147,7 +147,7 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 
 	tracker := newStageTimer(userID)
 
-	audioData, ok := readAndValidateAudio(w, r, deps, userID, tracker)
+	audioData, audioFormat, ok := readAndValidateAudio(w, r, deps, userID, tracker)
 	if !ok {
 		return
 	}
@@ -162,7 +162,7 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 		return
 	}
 
-	text, ok := transcribeAudioStage(ctx, w, sttClient, user, audioData, deps, tracker)
+	text, ok := transcribeAudioStage(ctx, w, sttClient, user, audioData, audioFormat, deps, tracker)
 	if !ok {
 		return
 	}
@@ -219,28 +219,40 @@ func runAudioIngest(w http.ResponseWriter, r *http.Request, deps audioIngestDeps
 	}
 }
 
-func readAndValidateAudio(w http.ResponseWriter, r *http.Request, deps audioIngestDeps, userID uint, tracker *stageTimer) ([]byte, bool) {
+func readAndValidateAudio(w http.ResponseWriter, r *http.Request, deps audioIngestDeps, userID uint, tracker *stageTimer) ([]byte, string, bool) {
 	stageStart := time.Now()
-	audioData, err := deps.readAudio(r)
+	audioData, format, err := deps.readAudio(r)
 	if err != nil || len(audioData) == 0 {
 		log.Printf("Error leyendo audio de usuario %d: %v", userID, err)
 		http.Error(w, "Audio requerido", http.StatusBadRequest)
 		tracker.LogFinal("audio_read_error")
-		return nil, false
+		return nil, "", false
 	}
 
 	tracker.LogStage("received", stageStart, map[string]any{
 		"size_bytes": len(audioData),
+		"format":     format,
 	})
 
-	if !deps.validateWAV(audioData) {
-		log.Printf("Formato de audio inválido de usuario %d", userID)
-		http.Error(w, "Formato de audio inválido. Se requiere WAV", http.StatusBadRequest)
-		tracker.LogFinal("invalid_wav")
-		return nil, false
+	if !deps.validateAudio(audioData, format) {
+		log.Printf("Formato de audio inválido de usuario %d: %s", userID, format)
+		http.Error(w, "Formato de audio inválido. Se requiere WAV o FLAC", http.StatusBadRequest)
+		tracker.LogFinal("invalid_format")
+		return nil, "", false
 	}
 
-	return audioData, true
+	return audioData, format, true
+}
+
+func validateAudioFormat(data []byte, format string) bool {
+	switch format {
+	case "audio/wav":
+		return isValidWAVFormat(data)
+	case "audio/flac":
+		return len(data) > 4 && string(data[:4]) == "fLaC"
+	default:
+		return false
+	}
 }
 
 func loadUserContext(w http.ResponseWriter, deps audioIngestDeps, userID uint, tracker *stageTimer) (*models.User, userService, bool) {
@@ -280,9 +292,9 @@ func ensureSTTClientStage(w http.ResponseWriter, deps audioIngestDeps, userID ui
 	return client, true
 }
 
-func transcribeAudioStage(ctx context.Context, w http.ResponseWriter, stt sttClient, user *models.User, audio []byte, deps audioIngestDeps, tracker *stageTimer) (string, bool) {
+func transcribeAudioStage(ctx context.Context, w http.ResponseWriter, stt sttClient, user *models.User, audio []byte, audioFormat string, deps audioIngestDeps, tracker *stageTimer) (string, bool) {
 	stageStart := time.Now()
-	text, err := stt.TranscribeAudio(ctx, audio)
+	text, err := stt.TranscribeAudio(ctx, audio, audioFormat)
 	text = strings.TrimSpace(text)
 	tracker.LogStage("stt", stageStart, map[string]any{
 		"text_len": len(text),
