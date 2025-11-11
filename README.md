@@ -4,22 +4,21 @@ Un backend de IA avanzado para walkie-talkies, diseñado para mejorar la accesib
 
 ## Descripción
 
-Este proyecto implementa un servidor backend que procesa audio en tiempo real, lo transcribe a texto usando modelos de IA locales, analiza el contenido para detectar comandos o conversaciones, y facilita la comunicación entre usuarios vía WebSockets. El enfoque principal es la accesibilidad, permitiendo que personas con discapacidades visuales o motrices interactúen con un walkie-talkie usando comandos de voz simples, como "conectar al canal 1" o "lista de canales", sin necesidad de interfaces gráficas complejas.
+Este proyecto implementa un servidor backend que procesa audio en tiempo real, lo transcribe a texto usando modelos de IA de APIs externas, analiza el contenido para detectar comandos o conversaciones, y facilita la comunicación entre usuarios vía WebSockets. El enfoque principal es la accesibilidad, permitiendo que personas con discapacidades visuales interactúen con un walkie-talkie usando comandos de voz simples, como "conectar al canal 1" o "lista de canales", sin necesidad de interfaces gráficas complejas.
 
 ### Finalidad y Accesibilidad
 - **Accesibilidad Visual**: Los usuarios ciegos pueden recibir feedback auditivo y controlar el sistema por voz.
-- **Accesibilidad Motriz**: Comandos de voz eliminan la necesidad de interacción táctil o manual.
 - **Comandos Intuitivos**: Frases naturales como "tráeme la lista de canales" o "salir del canal" permiten navegación fácil.
 - **Comunicación Inclusiva**: Facilita la participación en conversaciones grupales sin barreras.
 
 ## Características
-- **Transcripción de Audio (STT)**: Convierte voz a texto usando modelos locales de Whisper.
+- **Transcripción de Audio (STT)**: Convierte voz a texto usando modelos de APIs externas como AssemblyAI.
 - **Análisis de IA**: Detecta comandos vs. conversaciones usando modelos de lenguaje como Qwen.
 - **Gestión de Canales**: Conexión/desconexión a canales por voz.
 - **Comunicación en Tiempo Real**: WebSockets para broadcasting de audio.
 - **Base de Datos**: Persistencia de usuarios, canales y membresías con PostgreSQL.
-- **Arquitectura Local**: Todo corre en Docker, sin dependencias externas de internet.
-- **Cobertura de Tests**: Más del 70% de cobertura para asegurar estabilidad.
+- **Arquitectura Local**: Todo corre en Docker.
+- **Cobertura de Tests**: Más del 80% de cobertura para asegurar estabilidad.
 
 ## Tecnologías Usadas
 - **Go**: Lenguaje principal para el backend, con handlers HTTP y WebSockets.
