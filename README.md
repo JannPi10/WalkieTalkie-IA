@@ -107,5 +107,9 @@ Abre `coverage.html` para ver reporte visual.
 4. Push: `git push origin feature/nueva-funcionalidad`.
 5. Abre un Pull Request.
 
+
+## VIDEO DEL FUNCIONAMIENTO
+- Link video en youtube: `https://youtu.be/PhIgzJQ_rGQ?si=-30AzSGWfhw6UJaJ`.
+
 ## Contacto
 Para preguntas o soporte: [jann.ortiz@gopenux.com](mailto:tu-email@example.com)
